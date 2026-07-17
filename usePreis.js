@@ -11,8 +11,11 @@ const EMPTY = {
   individuell: false,
   tarif: null,
   tarifName: null,
+  anzeigeName: null,
   tarifSub: null,
   badge: null,
+  laufzeit: null,
+  preisgarantie: null,
   grundpreis: null,
   arbeitspreis: null,
 };
@@ -50,8 +53,11 @@ export function usePreis(gruppe, sparte, plz, verbrauch) {
           individuell: !!data.individuell,
           tarif: data.tarif || null,
           tarifName: data.tarifName || null,
+          anzeigeName: data.anzeigeName || data.tarifName || null,
           tarifSub: data.tarifSub || null,
           badge: data.badge || null,
+          laufzeit: data.laufzeit || null,
+          preisgarantie: data.preisgarantie || null,
           grundpreis: data.found ? data.grundpreis : null,
           arbeitspreis: data.found ? data.arbeitspreis : null,
         });
@@ -70,5 +76,8 @@ export function usePreis(gruppe, sparte, plz, verbrauch) {
       ? (state.grundpreis + (Number(verbrauch) * state.arbeitspreis) / 100) / 12
       : null;
 
-  return { ...state, monatlich };
+  // Grundpreis kommt aus der Tabelle in Euro/Jahr -> für die Anzeige pro Monat
+  const grundpreisMonat = state.grundpreis != null ? state.grundpreis / 12 : null;
+
+  return { ...state, monatlich, grundpreisMonat };
 }

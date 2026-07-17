@@ -483,6 +483,8 @@ export default function TarifRechner() {
   const [sending, setSending] = useState(false);
   const [telefonFromLink, setTelefonFromLink] = useState(false);
   const [showHeizungChooser, setShowHeizungChooser] = useState(false);
+  const [completedSpartes, setCompletedSpartes] = useState([]);
+  const [heizungAbschluss, setHeizungAbschluss] = useState(null); // "waermepumpe" | "nachtspeicher" | null
 
   /* Vorbefüllung aus dem Link: ?plz=&vorname=&nachname=&telefon=&email= */
   useEffect(() => {
@@ -551,6 +553,7 @@ export default function TarifRechner() {
     setSending(true);
     await submitToPipedrive(data);
     setSending(false);
+    setCompletedSpartes((s) => (s.includes(data.sparte) ? s : [...s, data.sparte]));
     return goTo("abschluss");
   }
   function back() {
@@ -582,7 +585,9 @@ export default function TarifRechner() {
     await submitToPipedrive(merged);
     setSending(false);
     setShowHeizungChooser(false);
+    setHeizungAbschluss(type);
     goTo("abschluss");
+    window.scrollTo?.({ top: 0, behavior: "smooth" });
   }
 
   async function handleShare() {
@@ -836,8 +841,8 @@ export default function TarifRechner() {
                 <div className="rounded-2xl p-5" style={{ border: `2px solid ${c.blue}`, background: c.blueTint }}>
                   <div className="flex items-start justify-between gap-2 mb-1">
                     <div>
-                      <span className="text-[18px] font-extrabold" style={{ fontFamily: fontDisplay, color: c.ink }}>
-                        {preis.tarifName || "Ihr passender Tarif"}
+                      <span className="text-[19px] font-extrabold" style={{ fontFamily: fontDisplay, color: c.ink }}>
+                        {preis.anzeigeName || "Ihr passender Tarif"}
                       </span>
                       {preis.tarifSub && (
                         <p className="text-xs mt-1" style={{ color: c.inkSoft }}>
@@ -850,25 +855,42 @@ export default function TarifRechner() {
                     </div>
                   </div>
 
+                  <div className="flex flex-wrap gap-1.5 mt-3">
+                    {preis.laufzeit && <Badge tone="blue">{preis.laufzeit}</Badge>}
+                    {preis.preisgarantie && <Badge tone="blue">{preis.preisgarantie}</Badge>}
+                    {preis.badge && <Badge tone={preis.badge.includes("Keine") ? "green" : "neutral"}>{preis.badge}</Badge>}
+                  </div>
+
                   {preis.found && preis.monatlich != null ? (
-                    <div className="flex items-baseline gap-1.5 mt-4">
-                      <span className="text-3xl font-extrabold" style={{ fontFamily: fontDisplay, color: c.ink }}>
-                        ca. {preis.monatlich.toFixed(2).replace(".", ",")} €
-                      </span>
-                      <span className="text-xs" style={{ color: c.inkSoft }}>
-                        / Monat, geschätzt
-                      </span>
-                    </div>
+                    <>
+                      <div className="flex items-baseline gap-1.5 mt-4">
+                        <span className="text-3xl font-extrabold" style={{ fontFamily: fontDisplay, color: c.ink }}>
+                          ca. {preis.monatlich.toFixed(2).replace(".", ",")} €
+                        </span>
+                        <span className="text-xs" style={{ color: c.inkSoft }}>
+                          / Monat, geschätzter Abschlag
+                        </span>
+                      </div>
+
+                      <div className="mt-4 rounded-xl overflow-hidden" style={{ background: "rgba(255,255,255,0.75)", border: `1px solid ${c.line}` }}>
+                        <div className="flex items-center justify-between px-4 py-2.5 text-sm" style={{ borderBottom: `1px solid ${c.line}` }}>
+                          <span style={{ color: c.inkSoft }}>Grundpreis</span>
+                          <span className="font-bold" style={{ color: c.ink, fontFamily: fontDisplay }}>
+                            {preis.grundpreisMonat.toFixed(2).replace(".", ",")} € / Monat
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between px-4 py-2.5 text-sm">
+                          <span style={{ color: c.inkSoft }}>Arbeitspreis</span>
+                          <span className="font-bold" style={{ color: c.ink, fontFamily: fontDisplay }}>
+                            {preis.arbeitspreis.toFixed(2).replace(".", ",")} ct / kWh
+                          </span>
+                        </div>
+                      </div>
+                    </>
                   ) : (
                     <p className="text-sm mt-4" style={{ color: c.inkSoft }}>
                       Der genaue Preis für Ihre Postleitzahl wird individuell berechnet und Ihnen vor Abschluss transparent mitgeteilt.
                     </p>
-                  )}
-
-                  {preis.badge && (
-                    <div className="mt-3">
-                      <Badge tone={preis.badge.includes("Keine") ? "green" : "blue"}>{preis.badge}</Badge>
-                    </div>
                   )}
                 </div>
               )}
@@ -1203,19 +1225,69 @@ export default function TarifRechner() {
                 Vielen Dank{data.vorname ? `, ${data.vorname}` : ""}!
               </h2>
               <p className="text-[15px] leading-relaxed mb-6" style={{ color: c.inkSoft }}>
-                Wir prüfen Ihre Angaben und melden uns innerhalb weniger Stunden persönlich per WhatsApp bei Ihnen.
+                {heizungAbschluss
+                  ? `Ihre Anfrage zu Ihrer ${heizungAbschluss === "waermepumpe" ? "Wärmepumpe" : "Nachtspeicherheizung"} ist bei uns eingegangen.`
+                  : completedSpartes.length >= 2
+                  ? "Ihre Anfrage für Strom & Gas ist vollständig bei uns eingegangen."
+                  : `Ihre Anfrage für ${data.sparte === "gas" ? "Gas" : "Strom"} ist bei uns eingegangen.`}
               </p>
 
-              {data.tarifName && data.tarif !== "individuell" && (
+              {heizungAbschluss && (
+                <div className="mb-4 text-left">
+                  <InfoNote>
+                    Für {heizungAbschluss === "waermepumpe" ? "Wärmepumpen" : "Nachtspeicherheizungen"} gibt es keine
+                    pauschalen Tarife von der Stange — ob und welche Möglichkeiten es für Sie gibt, klären wir gemeinsam
+                    in einem kurzen persönlichen Gespräch. Ihr Ansprechpartner meldet sich dazu direkt bei Ihnen.
+                  </InfoNote>
+                </div>
+              )}
+
+              {!heizungAbschluss && data.tarifName && data.tarif !== "individuell" && (
                 <div className="rounded-2xl p-4 mb-4 text-left" style={{ background: c.bg, border: `1px solid ${c.line}` }}>
                   <div className="text-xs mb-1" style={{ color: c.stone }}>
                     Ihre Anfrage
                   </div>
                   <div className="text-[15px] font-bold" style={{ color: c.ink, fontFamily: fontDisplay }}>
-                    {data.tarifName}
+                    {completedSpartes.length >= 2 ? "Strom & Gas" : data.tarifName}
                   </div>
                 </div>
               )}
+
+              {/* Wie geht es weiter? */}
+              <div className="rounded-2xl p-4 mb-4 text-left" style={{ background: c.bg, border: `1px solid ${c.line}` }}>
+                <div className="text-sm font-extrabold mb-3" style={{ color: c.ink, fontFamily: fontDisplay }}>
+                  So geht es jetzt weiter
+                </div>
+                <div className="space-y-3">
+                  {(heizungAbschluss
+                    ? [
+                        ["1", "Wir sichten Ihre Angaben und prüfen, welche Möglichkeiten es für Ihre Heizungsart gibt."],
+                        ["2", "Ihr persönlicher Ansprechpartner meldet sich bei Ihnen, um alles Weitere direkt zu besprechen."],
+                        ["3", "Erst wenn ein passendes Angebot vorliegt und Sie es per Unterschrift annehmen, wird ein Wechsel beauftragt."],
+                      ]
+                    : data.tarif === "individuell"
+                    ? [
+                        ["1", "Wir prüfen Ihre Angaben persönlich und suchen die passende Lösung für Ihren Verbrauch."],
+                        ["2", "Sie erhalten Ihr individuelles Angebot per E-Mail oder SMS — in der Regel innerhalb weniger Stunden."],
+                        ["3", "Erst wenn Sie das Angebot mit Ihrer Unterschrift annehmen, wird der Wechsel beauftragt. Vorher passiert nichts."],
+                      ]
+                    : [
+                        ["1", "Wir prüfen Ihre Angaben auf Vollständigkeit."],
+                        ["2", "Sind alle Daten vollständig, erstellen wir Ihr persönliches Angebot — Sie erhalten es innerhalb von maximal 4 Stunden per E-Mail oder SMS."],
+                        ["3", "Erst wenn Sie das Angebot mit Ihrer Unterschrift annehmen, wird der Wechsel beauftragt. Vorher passiert nichts."],
+                      ]
+                  ).map(([n, txt]) => (
+                    <div key={n} className="flex items-start gap-3">
+                      <div className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-extrabold mt-0.5" style={{ background: c.blueTint, color: c.blue, fontFamily: fontDisplay }}>
+                        {n}
+                      </div>
+                      <span className="text-sm leading-relaxed" style={{ color: c.inkSoft }}>
+                        {txt}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
 
               {data.zaehlerSpaeter && (
                 <div className="mb-3">
@@ -1229,7 +1301,7 @@ export default function TarifRechner() {
               )}
 
               <div className="space-y-2.5 mt-6">
-                {!secondPass && (
+                {!secondPass && !heizungAbschluss && !completedSpartes.includes("gas") && (
                   <button
                     onClick={startGasFlow}
                     className="w-full flex items-center justify-center gap-2 rounded-full px-5 py-3.5 text-[15px] font-extrabold"
