@@ -2,6 +2,7 @@
 
 ## Was ist neu
 
+
 - **Design:** Identischer Look zur Website (Manrope, Blau #1473EB, Pill-Buttons)
 - **Neue Tariflogik:** Es wird immer genau EIN passender Tarif empfohlen:
   - Strom, regulärer Wechsel → ÖkoStrom24 Pur
