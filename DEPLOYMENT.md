@@ -1,56 +1,64 @@
-# Tarifrechner V2 – Deployment
+# Tarifrechner FINAL – Deployment
 
-## Was ist neu
+## Was ist neu in dieser Version
 
+**Lead-Sicherung (wichtigste Änderung):**
+Die Kontaktdaten (Name, Handy, E-Mail) werden jetzt DIREKT nach der
+Tarif-Empfehlung abgefragt — im Moment der höchsten Motivation.
+Sobald der Kunde sie eingibt und auf Weiter klickt, wird der Lead
+sofort im Hintergrund an n8n/Pipedrive übermittelt (Feld
+submission_typ: "lead_vorab"). Der finale Submit am Ende aktualisiert
+denselben Deal (submission_typ: "vollstaendig") — dein n8n-Workflow
+sucht ja bereits per Telefonnummer nach bestehenden Deals.
+ERGEBNIS: Auch Abbrecher nach dem Kontakt-Schritt sind jetzt Leads!
 
+**Neue Schrittfolge:**
+Verbrauch -> Wechselweg -> Tarif -> KONTAKT -> Unterlagen ->
+Vertragsdaten -> Zahlung -> Zähler
 
-- **Design:** Identischer Look zur Website (Manrope, Blau #1473EB, Pill-Buttons)
-- **Neue Tariflogik:** Es wird immer genau EIN passender Tarif empfohlen:
-  - Strom, regulärer Wechsel → ÖkoStrom24 Pur
-  - Strom, ohne Bonitätsprüfung, ab 1.500 kWh → Plan B Energie NEO T24
-  - Strom, ohne Bonitätsprüfung, 500–1.499 kWh → GENO Strom Natur Direkt
-  - Strom, ohne Bonitätsprüfung, unter 500 kWh → individuelle Prüfung
-  - Gas, regulärer Wechsel → Easy24 Gas PUR
-  - Gas, ohne Bonitätsprüfung, ab 5.000 kWh → ELE erdgasFair
-  - Gas, ohne Bonitätsprüfung, unter 5.000 kWh → individuelle Prüfung
-- **Neuer Schritt „Wechselweg":** Subtile Bonitätsfrage über die Wahl
-  „Ohne Bonitätsprüfung (empfohlen)" vs. „Regulärer Wechsel"
-- **Zurück-Button** auf jedem Schritt (auch zurück zum Start)
-- **Vorbefüllung** per Link: ?plz=&vorname=&nachname=&telefon=&email=
-- **Individuell-Fälle** durchlaufen einen verkürzten Ablauf (keine IBAN/Zähler-Abfrage)
-- **Preisdaten:** 5 neue JSON-Tabellen aus deinen CSVs (Lichtblick komplett entfernt)
-- **Payload unverändert kompatibel** zum bestehenden n8n/Pipedrive-Workflow,
-  neues Zusatzfeld: `tarif_name` (Klartext, z. B. "Plan B Energie NEO T24")
+**Robustheit & Eskalation:**
+- Wenn der finale Submit fehlschlägt (z. B. Funkloch), sieht der Kunde
+  KEINE falsche Erfolgsmeldung mehr, sondern einen Hinweis mit
+  Retry-Möglichkeit + WhatsApp-Button
+- "Hilfe"-Button (WhatsApp) oben rechts auf JEDEM Schritt
+- Dateigrößen-Limit 10 MB mit verständlicher Meldung
+- Hochgeladene Dokumente einzeln entfernbar (X-Button)
+- Server-Antwort wird geprüft (res.ok), nicht nur "gesendet"
 
-## Deployment (bestehendes Repo überschreiben)
+**UX-Feinschliff:**
+- Fortschrittsbalken mit Schritt-Namen ("Ihr Tarif — Schritt 3 von 8")
+- IBAN wird beim Tippen automatisch in 4er-Gruppen formatiert
+- autoComplete-Attribute: Handy schlägt Name/Tel/E-Mail/Adresse vor
+- Lade-Spinner beim Absenden
+- Datenschutz-Hinweis direkt unter den Kontaktfeldern
 
-1. GitHub-Repo `mwenergieb2b-create/tarifrechner` öffnen
-2. ALLE alten Dateien löschen ODER einfach alle neuen Dateien per
-   "Add file → Upload files" hochladen (überschreibt Gleichnamige)
-   WICHTIG: Die alten JSON-Dateien in api/data/ (bonitaetsfrei_*.json,
-   normal_*.json) manuell löschen — die neuen heißen anders
-   (planb_strom.json, geno_strom.json, vattenfall_strom.json,
-   ele_gas.json, vattenfall_gas.json)
-3. Vercel deployt automatisch nach dem Commit
+## Hochladen (nur EINE Datei!)
 
-## Eigene Domain: tarifrechner.kwh-beratung.de
+Es hat sich nur App.jsx geändert. Alles andere (api/, usePreis.js,
+Preistabellen, Konfiguration) bleibt unverändert.
 
-1. Vercel-Dashboard → Projekt „tarifrechner" → Settings → Domains
-2. „tarifrechner.kwh-beratung.de" eingeben → Add
-3. Vercel zeigt dir einen CNAME-Wert an (z. B. cname.vercel-dns.com)
-4. Cloudflare-Dashboard → Domain kwh-beratung.de → DNS → Records → Add record:
-   - Type: CNAME
-   - Name: tarifrechner
-   - Target: cname.vercel-dns.com (den Wert, den Vercel anzeigt)
-   - Proxy status: AUS (graue Wolke, „DNS only") — wichtig für Vercel!
-5. Speichern, 1–2 Minuten warten, Vercel bestätigt die Domain automatisch
-6. Danach auf der Website (index.html im Website-Repo) alle Links von
-   https://tarifrechner-g11r.vercel.app auf
-   https://tarifrechner.kwh-beratung.de ändern
+1. GitHub-Repo "tarifrechner" öffnen
+2. Add file -> Upload files
+3. Die neue App.jsx reinziehen (überschreibt die alte)
+4. Commit changes
+5. Vercel deployt automatisch (~1 Minute)
 
-## Noch offen (aus dem alten Code übernommen)
+## Testen nach dem Deploy
 
-- N8N_PROGRESS_URL in App.jsx ist weiterhin ein Platzhalter — dort die
-  Webhook-URL des „Rechner Fortschritt"-Workflows eintragen, sobald der
-  Workflow in n8n existiert. Der Haupt-Webhook (Submission) ist unverändert
-  aktiv und funktioniert.
+1. rechner.kwh-beratung.de auf dem HANDY öffnen
+2. Flow durchklicken: PLZ -> Wechselweg -> Tarif wird angezeigt?
+3. Kontaktdaten eingeben -> Weiter -> JETZT in Pipedrive prüfen:
+   Ist bereits ein Deal angelegt? (Lead-Sicherung funktioniert!)
+4. Rest durchklicken bis "Vielen Dank"
+5. In Pipedrive prüfen: Wurde derselbe Deal aktualisiert (nicht doppelt)?
+
+## Wichtig für n8n (optional, aber empfohlen)
+
+Der Payload enthält jetzt das neue Feld "submission_typ":
+- "lead_vorab"    = Kunde hat Kontaktdaten eingegeben, Rest folgt evtl.
+- "vollstaendig"  = Kunde hat den Rechner komplett abgeschlossen
+
+Du kannst in n8n darauf filtern, z. B. um bei "lead_vorab"-Deals,
+die nach 1 Stunde nicht "vollstaendig" wurden, eine Erinnerung zu
+schicken ("Sie waren fast fertig — sollen wir den Rest zusammen
+per WhatsApp erledigen?"). Das ist die stärkste Rückholmechanik.
