@@ -13,6 +13,8 @@ import {
   Flame,
   Zap,
   UserCheck,
+  X,
+  AlertTriangle,
 } from "lucide-react";
 import { usePreis } from "./usePreis";
 
@@ -40,11 +42,30 @@ const c = {
 const fontDisplay = "'Manrope', -apple-system, sans-serif";
 const fontBody = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
 
-const STEPS_FIRST = ["basics", "wechselweg", "empfehlung", "dokumente", "persoenlich", "bankdaten", "zaehler"];
+const WA_LINK =
+  "https://api.whatsapp.com/send/?phone=4915114168093&text=Hallo%2C%20ich%20f%C3%BClle%20gerade%20den%20Tarifrechner%20aus%20und%20habe%20eine%20Frage.";
+
+/* ---------------------------------------------------------
+   Schrittfolgen
+   Kernidee: Kontaktdaten kommen DIREKT nach der Tarif-
+   empfehlung (höchste Motivation) — damit ist der Lead
+   gesichert, bevor die aufwendigeren Felder kommen.
+--------------------------------------------------------- */
+const STEPS_FIRST = ["basics", "wechselweg", "empfehlung", "kontakt", "dokumente", "vertrag", "bankdaten", "zaehler"];
 const STEPS_SECOND = ["basics", "wechselweg", "empfehlung", "dokumente", "bankdaten", "zaehler"];
-// Reduzierter Ablauf bei individueller Prüfung (kein Tarif -> keine IBAN/Zähler nötig)
-const STEPS_INDIVIDUELL_FIRST = ["basics", "wechselweg", "empfehlung", "dokumente", "persoenlich"];
+const STEPS_INDIVIDUELL_FIRST = ["basics", "wechselweg", "empfehlung", "kontakt", "dokumente"];
 const STEPS_INDIVIDUELL_SECOND = ["basics", "wechselweg", "empfehlung", "dokumente"];
+
+const STEP_TITLES = {
+  basics: "Verbrauch",
+  wechselweg: "Wechselweg",
+  empfehlung: "Ihr Tarif",
+  kontakt: "Kontakt",
+  dokumente: "Unterlagen",
+  vertrag: "Vertragsdaten",
+  bankdaten: "Zahlung",
+  zaehler: "Zähler",
+};
 
 const HOUSEHOLD_PRESETS = [
   { label: "1 Person", kwh: 1500 },
@@ -72,7 +93,7 @@ const validators = {
   strasse: (v) => /^[A-Za-zÀ-ÖØ-öø-ÿ' .-]{2,60}$/.test(v.trim()) && /[A-Za-zÀ-ÖØ-öø-ÿ]/.test(v),
   hausnummer: (v) => /^\d{1,4}\s?[a-zA-Z]?$/.test(v.trim()),
   plz: (v) => /^\d{5}$/.test(v.trim()),
-  telefon: (v) => /^\+?\d{7,15}$/.test(v.replace(/[\s()-]/g, "")),
+  telefon: (v) => /^\+?\d{7,15}$/.test(v.replace(/[\s()\/-]/g, "")),
   email: (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()),
   einzugsdatum: (v) => {
     if (!v) return false;
@@ -104,7 +125,7 @@ const errorText = {
   geburtsdatum: "Bitte ein gültiges Geburtsdatum eingeben (mind. 18 Jahre)",
   telefon: "Bitte eine gültige Handynummer eingeben",
   email: "Bitte eine gültige E-Mail-Adresse eingeben",
-  einzugsdatum: "Bitte ein Datum ab dem frühestmöglichen Belieferungstermin wählen",
+  einzugsdatum: "Bitte ein Datum ab dem frühestmöglichen Termin wählen",
   kundennummerAlt: "Bitte die Kundennummer Ihres aktuellen Anbieters eingeben",
 };
 
@@ -114,29 +135,38 @@ function isValidIBAN(raw) {
   const rearranged = s.slice(4) + s.slice(0, 4);
   const numeric = rearranged.replace(/[A-Z]/g, (ch) => (ch.charCodeAt(0) - 55).toString());
   let rem = 0;
-  for (let i = 0; i < numeric.length; i++) {
-    rem = (rem * 10 + Number(numeric[i])) % 97;
-  }
+  for (let i = 0; i < numeric.length; i++) rem = (rem * 10 + Number(numeric[i])) % 97;
   return rem === 1;
 }
 
+function formatIBAN(v) {
+  return v
+    .replace(/[^A-Za-z0-9]/g, "")
+    .toUpperCase()
+    .replace(/(.{4})/g, "$1 ")
+    .trim();
+}
+
 /* ---------------------------------------------------------
-   Kleine UI-Bausteine
+   UI-Bausteine
 --------------------------------------------------------- */
-function ProgressBar({ fraction, label }) {
+function ProgressBar({ fraction, current, total, label }) {
   return (
-    <div className="w-full">
+    <div className="w-full" aria-label={`Schritt ${current} von ${total}: ${label}`}>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[11px] font-bold" style={{ fontFamily: fontDisplay, color: c.blue }}>
+          {label}
+        </span>
+        <span className="text-[11px] font-semibold" style={{ fontFamily: fontDisplay, color: c.stone }}>
+          Schritt {current} von {total}
+        </span>
+      </div>
       <div className="h-1.5 w-full rounded-full overflow-hidden" style={{ background: c.line }}>
         <div
           className="h-full rounded-full"
           style={{ width: `${Math.round(fraction * 100)}%`, background: c.blue, transition: "width 0.4s ease" }}
         />
       </div>
-      {label && (
-        <div className="text-[11px] mt-1 text-right font-semibold" style={{ fontFamily: fontDisplay, color: c.stone }}>
-          {label}
-        </div>
-      )}
     </div>
   );
 }
@@ -156,12 +186,13 @@ function Badge({ tone = "blue", children }) {
 }
 
 function InfoNote({ children, tone = "blue" }) {
-  const bg = tone === "blue" ? c.blueTint : c.greenTint;
-  const iconColor = tone === "blue" ? c.blue : c.greenDark;
+  const bg = tone === "blue" ? c.blueTint : tone === "warn" ? c.redTint : c.greenTint;
+  const iconColor = tone === "blue" ? c.blue : tone === "warn" ? c.red : c.greenDark;
+  const Icon = tone === "warn" ? AlertTriangle : Info;
   return (
-    <div className="flex gap-2.5 rounded-xl px-4 py-3 text-sm leading-relaxed" style={{ background: bg, color: c.ink }}>
-      <Info size={16} className="mt-0.5 flex-shrink-0" style={{ color: iconColor }} />
-      <p>{children}</p>
+    <div className="flex gap-2.5 rounded-xl px-4 py-3 text-sm leading-relaxed text-left" style={{ background: bg, color: c.ink }}>
+      <Icon size={16} className="mt-0.5 flex-shrink-0" style={{ color: iconColor }} />
+      <p className="m-0">{children}</p>
     </div>
   );
 }
@@ -186,8 +217,6 @@ function Field({ label, hint, error, children }) {
   );
 }
 
-const inputBase = "w-full rounded-xl px-4 py-3 text-[15px] outline-none transition-colors";
-
 function TextInput({ isError, ...props }) {
   const [focused, setFocused] = useState(false);
   return (
@@ -201,7 +230,7 @@ function TextInput({ isError, ...props }) {
         setFocused(false);
         props.onBlur?.(e);
       }}
-      className={inputBase}
+      className="w-full rounded-xl px-4 py-3 text-[15px] outline-none transition-colors"
       style={{
         background: c.surface,
         border: `1.5px solid ${isError ? c.red : focused ? c.blue : c.line}`,
@@ -233,31 +262,40 @@ function StepShell({ eyebrow, title, subtitle, children, footer }) {
   );
 }
 
-function NavButtons({ onBack, onNext, nextLabel = "Weiter", disabled }) {
+function NavButtons({ onBack, onNext, nextLabel = "Weiter", disabled, loading }) {
   return (
     <div className="flex items-center gap-3">
       {onBack && (
         <button
           onClick={onBack}
+          disabled={loading}
           className="flex items-center gap-1.5 rounded-full px-4 py-3 text-sm font-bold"
-          style={{ color: c.inkSoft, fontFamily: fontDisplay }}
+          style={{ color: c.inkSoft, fontFamily: fontDisplay, opacity: loading ? 0.5 : 1 }}
         >
           <ArrowLeft size={16} /> Zurück
         </button>
       )}
       <button
         onClick={onNext}
-        disabled={disabled}
+        disabled={disabled || loading}
         className="flex-1 flex items-center justify-center gap-2 rounded-full px-5 py-3.5 text-[15px] font-extrabold transition-all"
         style={{
-          background: disabled ? c.line : c.blue,
-          color: disabled ? c.stone : "#fff",
-          cursor: disabled ? "not-allowed" : "pointer",
+          background: disabled || loading ? c.line : c.blue,
+          color: disabled || loading ? c.stone : "#fff",
+          cursor: disabled || loading ? "not-allowed" : "pointer",
           fontFamily: fontDisplay,
-          boxShadow: disabled ? "none" : "0 6px 20px rgba(20,115,235,0.34)",
+          boxShadow: disabled || loading ? "none" : "0 6px 20px rgba(20,115,235,0.34)",
         }}
       >
-        {nextLabel} <ArrowRight size={16} />
+        {loading ? (
+          <>
+            <span className="spinner" aria-hidden="true" /> Wird gesendet…
+          </>
+        ) : (
+          <>
+            {nextLabel} <ArrowRight size={16} />
+          </>
+        )}
       </button>
     </div>
   );
@@ -302,10 +340,30 @@ function ToggleCard({ selected, onClick, title, sub, badge, disabled }) {
   );
 }
 
+function CheckboxRow({ checked, onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full text-left flex items-center gap-3 rounded-xl px-4 py-3"
+      style={{ background: checked ? c.blueTint : c.surface, border: `1.5px solid ${checked ? c.blue : c.line}` }}
+    >
+      <div
+        className="w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0"
+        style={{ background: checked ? c.blue : c.surface, border: `1.5px solid ${checked ? c.blue : c.line}` }}
+      >
+        {checked && <Check size={13} color="#fff" />}
+      </div>
+      <span className="text-sm" style={{ color: c.ink }}>
+        {children}
+      </span>
+    </button>
+  );
+}
+
 /* ---------------------------------------------------------
-   n8n-Anbindung (URLs unverändert übernommen)
+   n8n-Anbindung
 --------------------------------------------------------- */
-// TODO Max: hier die Webhook-URL des "Rechner Fortschritt"-Workflows in n8n eintragen (war im alten Code auch noch ein Platzhalter).
+// TODO Max: Fortschritts-Webhook eintragen, sobald der n8n-Workflow existiert
 const N8N_PROGRESS_URL = "https://kwh-beratung.app.n8n.cloud/webhook/HIER-PROGRESS-WEBHOOK-EINTRAGEN";
 const N8N_WEBHOOK_URL = "https://kwh-beratung.app.n8n.cloud/webhook/b4438f04-ad90-4dc8-9281-b62536cf532a";
 
@@ -314,14 +372,15 @@ const STEP_LABELS = {
   basics: "Verbrauch eingegeben",
   wechselweg: "Wechselweg gewählt",
   empfehlung: "Tarif-Empfehlung gesehen",
-  persoenlich: "Kontaktdaten eingegeben",
+  kontakt: "Kontaktdaten eingegeben",
+  vertrag: "Vertragsdaten eingegeben",
   bankdaten: "Zahlungsart gewählt",
   zaehler: "Zählerdaten eingegeben",
 };
 
 function sendProgressPing(data, step) {
   const label = STEP_LABELS[step];
-  if (!label || !data.telefon) return;
+  if (!label || !data.telefon || N8N_PROGRESS_URL.includes("HIER-PROGRESS")) return;
   fetch(N8N_PROGRESS_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -354,45 +413,52 @@ function readFileAsBase64(file) {
 
 /* ---------------------------------------------------------
    Payload — Feldnamen bleiben KOMPATIBEL zum bestehenden
-   n8n/Pipedrive-Workflow. Neu: tarif_name (Klartext-Tarifname).
+   n8n/Pipedrive-Workflow.
+   Neu: submission_typ ("lead_vorab" | "vollstaendig") —
+   nach dem Kontakt-Schritt wird der Lead sofort gesichert,
+   der finale Submit aktualisiert denselben Deal (Suche per
+   Telefonnummer im n8n-Workflow).
 --------------------------------------------------------- */
-function buildPayload(data) {
+function buildPayload(data, submissionTyp) {
   const dokumente =
     data.dokumentUpload && data.dokumentUpload.length
       ? data.dokumentUpload.map((f) => ({ dateiname: f.name, mimetype: f.mimetype, base64: f.base64 }))
       : [];
 
+  const hasDocs = !!(data.dokumentUpload && data.dokumentUpload.length);
+
   const zaehlernummerValue = data.zaehlernummer && data.zaehlernummer.trim()
     ? data.zaehlernummer
-    : data.dokumentUpload
+    : hasDocs
     ? "siehe Dokument-Upload"
     : "";
   const maloIdValue = data.maloId && data.maloId.trim()
     ? data.maloId
-    : data.dokumentUpload
+    : hasDocs
     ? "siehe Dokument-Upload"
     : "nicht angegeben";
 
   const base = {
+    submission_typ: submissionTyp,
     telefon: data.telefon,
     email: data.email,
-    vorname: data.dokumentUpload ? "siehe Dokument-Upload" : data.vorname,
-    nachname: data.dokumentUpload ? "siehe Dokument-Upload" : data.nachname,
+    vorname: data.vorname || (hasDocs ? "siehe Dokument-Upload" : ""),
+    nachname: data.nachname || (hasDocs ? "siehe Dokument-Upload" : ""),
     geburtsdatum: data.geburtsdatum,
-    strasse: data.dokumentUpload ? "siehe Dokument-Upload" : data.strasse,
-    hausnummer: data.dokumentUpload ? "-" : data.hausnummer,
+    strasse: hasDocs && !data.strasse ? "siehe Dokument-Upload" : data.strasse,
+    hausnummer: hasDocs && !data.hausnummer ? "-" : data.hausnummer,
     plz: data.plz,
-    ort: data.dokumentUpload ? "siehe Dokument-Upload" : data.ort,
+    ort: hasDocs && !data.ort ? "siehe Dokument-Upload" : data.ort,
     neueinzug: data.neueinzug,
     einzugsdatum: data.neueinzug ? data.einzugsdatum : "",
-    kundennummer_alt: data.neueinzug ? "" : data.dokumentUpload ? "siehe Dokument-Upload" : data.kundennummerAlt,
+    kundennummer_alt: data.neueinzug ? "" : hasDocs && !data.kundennummerAlt ? "siehe Dokument-Upload" : data.kundennummerAlt,
     dokumente: dokumente,
     zaehler_foto: data.zaehlerFoto ? data.zaehlerFoto.base64 : "",
     zaehler_foto_dateiname: data.zaehlerFoto ? data.zaehlerFoto.name : "",
     zaehler_foto_mimetype: data.zaehlerFoto ? data.zaehlerFoto.mimetype : "",
     aktueller_anbieter: data.neueinzug ? "" : data.aktuellerAnbieter,
-    iban: data.zahlungsart === "selbstzahler" || data.bankdatenSpaeter ? "" : data.iban,
-    iban_status: data.zahlungsart === "selbstzahler" ? "selbstzahler" : data.bankdatenSpaeter ? "folgt_spaeter" : "vorhanden",
+    iban: data.zahlungsart === "selbstzahler" || data.bankdatenSpaeter ? "" : data.iban.replace(/\s+/g, ""),
+    iban_status: data.zahlungsart === "selbstzahler" ? "selbstzahler" : data.bankdatenSpaeter ? "folgt_spaeter" : data.iban ? "vorhanden" : "offen",
     bonitaet: data.bonitaet,
     sparte: data.sparte,
     tarif_name: data.tarifName || "",
@@ -404,9 +470,9 @@ function buildPayload(data) {
     ? "foto_hochgeladen"
     : data.zaehlernummer && data.zaehlernummer.trim()
     ? "nummer_eingegeben"
-    : data.dokumentUpload
+    : hasDocs
     ? "siehe_dokument_upload"
-    : "nummer_eingegeben";
+    : "offen";
 
   const sparteFields =
     data.sparte === "strom"
@@ -429,16 +495,16 @@ function buildPayload(data) {
   return { ...base, ...sparteFields };
 }
 
-async function submitToPipedrive(data) {
+async function submitToPipedrive(data, submissionTyp) {
   try {
-    await fetch(N8N_WEBHOOK_URL, {
+    const res = await fetch(N8N_WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(buildPayload(data)),
+      body: JSON.stringify(buildPayload(data, submissionTyp)),
     });
-    return true;
+    return res.ok;
   } catch (e) {
-    console.error("Übermittlung an n8n fehlgeschlagen:", e);
+    console.error("Übermittlung fehlgeschlagen:", e);
     return false;
   }
 }
@@ -481,12 +547,14 @@ export default function TarifRechner() {
   const [touched, setTouched] = useState({});
   const [copied, setCopied] = useState(false);
   const [sending, setSending] = useState(false);
+  const [submitError, setSubmitError] = useState(false);
+  const [leadSecured, setLeadSecured] = useState(false);
   const [telefonFromLink, setTelefonFromLink] = useState(false);
   const [showHeizungChooser, setShowHeizungChooser] = useState(false);
   const [completedSpartes, setCompletedSpartes] = useState([]);
-  const [heizungAbschluss, setHeizungAbschluss] = useState(null); // "waermepumpe" | "nachtspeicher" | null
+  const [heizungAbschluss, setHeizungAbschluss] = useState(null);
 
-  /* Vorbefüllung aus dem Link: ?plz=&vorname=&nachname=&telefon=&email= */
+  /* Vorbefüllung aus dem Link */
   useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -495,9 +563,7 @@ export default function TarifRechner() {
         const v = params.get(k);
         if (v) patch[k] = v;
       });
-      if (Object.keys(patch).length) {
-        setData((d) => ({ ...d, ...patch }));
-      }
+      if (Object.keys(patch).length) setData((d) => ({ ...d, ...patch }));
       if (patch.telefon) {
         setTelefonFromLink(true);
         sendProgressPing({ ...initialData, ...patch }, "geoeffnet");
@@ -506,27 +572,22 @@ export default function TarifRechner() {
   }, []);
 
   useEffect(() => {
-    if (step !== "intro" && step !== "abschluss") {
-      sendProgressPing(data, step);
-    }
+    if (step !== "abschluss") sendProgressPing(data, step);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step]);
 
-  /* Der EINE empfohlene Tarif — Logik liegt serverseitig in /api/preis */
   const gruppe = data.bonitaet ? "bonitaetsfrei" : "normal";
   const preis = usePreis(gruppe, data.sparte, data.plz, data.verbrauch);
   const istIndividuell = preis.individuell;
 
-  /* Aktive Schrittfolge — abhängig von Durchlauf & Individuell-Fall */
   const activeSteps = useMemo(() => {
     if (istIndividuell) return secondPass ? STEPS_INDIVIDUELL_SECOND : STEPS_INDIVIDUELL_FIRST;
     return secondPass ? STEPS_SECOND : STEPS_FIRST;
   }, [istIndividuell, secondPass]);
 
   const stepIndex = activeSteps.indexOf(step);
-  const fraction = step === "abschluss" ? 1 : (stepIndex + 1) / (activeSteps.length + 1);
+  const fraction = step === "abschluss" ? 1 : (stepIndex + 1) / activeSteps.length;
 
-  /* Empfohlenen Tarif in die Formulardaten spiegeln (für Payload) */
   useEffect(() => {
     if (istIndividuell) {
       setData((d) => ({ ...d, tarif: "individuell", tarifName: "Individuelle Prüfung" }));
@@ -543,21 +604,40 @@ export default function TarifRechner() {
     setTouched((t) => ({ ...t, [name]: true }));
   }
   function goTo(s) {
+    setSubmitError(false);
     setStep(s);
     window.scrollTo?.({ top: 0, behavior: "smooth" });
   }
+
   async function next() {
-    // intro entfernt — Rechner startet direkt mit basics
     const i = activeSteps.indexOf(step);
+
+    // Lead-Sicherung: direkt nach dem Kontakt-Schritt wird der Lead
+    // im Hintergrund an Pipedrive übermittelt (fire-and-forget).
+    // Der finale Submit aktualisiert denselben Deal über die Telefonnummer.
+    if (step === "kontakt" && !leadSecured && !secondPass) {
+      setLeadSecured(true);
+      submitToPipedrive(data, "lead_vorab").catch(() => {});
+    }
+
     if (i < activeSteps.length - 1) return goTo(activeSteps[i + 1]);
+
+    // Finaler Submit — mit echter Fehlerbehandlung:
+    // Bei Fehlschlag KEINE falsche Erfolgsmeldung, sondern
+    // Fehlerhinweis mit Retry + WhatsApp-Eskalation.
     setSending(true);
-    await submitToPipedrive(data);
+    setSubmitError(false);
+    const ok = await submitToPipedrive(data, "vollstaendig");
     setSending(false);
+    if (!ok) {
+      setSubmitError(true);
+      return;
+    }
     setCompletedSpartes((s) => (s.includes(data.sparte) ? s : [...s, data.sparte]));
     return goTo("abschluss");
   }
+
   function back() {
-    if (step === activeSteps[0]) return; // erster Schritt, kein Zurück
     const i = activeSteps.indexOf(step);
     if (i <= 0) return;
     return goTo(activeSteps[i - 1]);
@@ -579,22 +659,27 @@ export default function TarifRechner() {
   }
 
   async function startHeizungFlow(type) {
-    const merged = { ...data, heizungstyp: type, sparte: "strom", tarif: "individuell", tarifName: type === "waermepumpe" ? "Wärmepumpe (individuell)" : "Nachtspeicher (individuell)" };
+    const merged = {
+      ...data,
+      heizungstyp: type,
+      sparte: "strom",
+      tarif: "individuell",
+      tarifName: type === "waermepumpe" ? "Wärmepumpe (individuell)" : "Nachtspeicher (individuell)",
+    };
     update({ heizungstyp: type, sparte: "strom", tarif: "individuell" });
     setSending(true);
-    await submitToPipedrive(merged);
+    await submitToPipedrive(merged, "vollstaendig");
     setSending(false);
     setShowHeizungChooser(false);
     setHeizungAbschluss(type);
     goTo("abschluss");
-    window.scrollTo?.({ top: 0, behavior: "smooth" });
   }
 
   async function handleShare() {
     const shareData = {
       title: "Energie-Tarifcheck – kWh Beratung",
       text: "Ich hab gerade meinen Tarif geprüft – lohnt sich, auch mal reinzuschauen:",
-      url: window.location.href,
+      url: "https://rechner.kwh-beratung.de",
     };
     try {
       if (navigator.share) {
@@ -609,6 +694,11 @@ export default function TarifRechner() {
     } catch (e) {}
   }
 
+  function removeDokument(idx) {
+    const rest = (data.dokumentUpload || []).filter((_, i) => i !== idx);
+    update({ dokumentUpload: rest.length ? rest : null });
+  }
+
   const householdPresets = data.sparte === "gas" ? GAS_PRESETS : HOUSEHOLD_PRESETS;
 
   const canNext = useMemo(() => {
@@ -616,28 +706,29 @@ export default function TarifRechner() {
       case "basics":
         return validators.plz(data.plz) && Number(data.verbrauch) > 0;
       case "wechselweg":
-        return true; // eine Option ist immer vorausgewählt
+        return true;
       case "empfehlung":
         return !preis.loading;
-      case "dokumente":
-        return !!data.dokumentUpload || data.dokumentSpaeter;
-      case "persoenlich":
-        if (data.dokumentUpload) {
-          return (telefonFromLink || validators.telefon(data.telefon)) && validators.email(data.email) && validators.geburtsdatum(data.geburtsdatum);
-        }
+      case "kontakt":
         return (
           validators.vorname(data.vorname) &&
           validators.nachname(data.nachname) &&
+          (telefonFromLink || validators.telefon(data.telefon)) &&
+          validators.email(data.email)
+        );
+      case "dokumente":
+        return !!data.dokumentUpload || data.dokumentSpaeter;
+      case "vertrag":
+        if (data.dokumentUpload) return validators.geburtsdatum(data.geburtsdatum);
+        return (
           validators.geburtsdatum(data.geburtsdatum) &&
           validators.strasse(data.strasse) &&
           validators.hausnummer(data.hausnummer) &&
           validators.ort(data.ort) &&
           validators.plz(data.plz) &&
-          (telefonFromLink || validators.telefon(data.telefon)) &&
-          validators.email(data.email) &&
           (data.neueinzug
             ? validators.einzugsdatum(data.einzugsdatum)
-            : data.aktuellerAnbieter.trim().length > 1 && (!!data.dokumentUpload || validators.kundennummerAlt(data.kundennummerAlt)))
+            : data.aktuellerAnbieter.trim().length > 1 && validators.kundennummerAlt(data.kundennummerAlt))
         );
       case "bankdaten":
         return data.zahlungsart === "selbstzahler" || data.bankdatenSpaeter || isValidIBAN(data.iban);
@@ -657,28 +748,41 @@ export default function TarifRechner() {
         @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap');
         @keyframes fadeSlideIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
         .step-enter { animation: fadeSlideIn 0.4s ease; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .spinner { display:inline-block; width:15px; height:15px; border:2.5px solid rgba(255,255,255,0.35); border-top-color:#fff; border-radius:50%; animation: spin 0.7s linear infinite; }
         input[type="date"]::-webkit-calendar-picker-indicator { opacity: 0.6; }
-        @media (prefers-reduced-motion: reduce) { .step-enter { animation: none; } }
+        @media (prefers-reduced-motion: reduce) { .step-enter { animation: none; } .spinner { animation-duration: 1.4s; } }
       `}</style>
 
       <div className="max-w-md mx-auto px-5 py-4 sm:py-6">
         {/* Kopfzeile */}
         <div className="flex items-center justify-between mb-2">
+          <a href="https://kwh-beratung.de" className="text-[16px] font-extrabold tracking-tight no-underline" style={{ fontFamily: fontDisplay, color: c.ink }}>
+            kWh Beratung
+          </a>
           <div className="flex items-center gap-2">
-            <span className="text-[16px] font-extrabold tracking-tight" style={{ fontFamily: fontDisplay, color: c.ink }}>
-              kWh Beratung
-            </span>
             {step !== "abschluss" && (
               <span className="inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: c.blueTint, color: c.blue, fontFamily: fontDisplay }}>
                 {data.sparte === "strom" ? <Zap size={11} /> : <Flame size={11} />}
                 {data.sparte === "strom" ? "Strom" : "Gas"}
               </span>
             )}
+            <a
+              href={WA_LINK}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full no-underline"
+              style={{ background: c.greenTint, color: c.greenDark, fontFamily: fontDisplay }}
+              aria-label="Fragen? Per WhatsApp schreiben"
+            >
+              <MessageCircle size={11} /> Hilfe
+            </a>
           </div>
         </div>
+
         {step !== "abschluss" && (
           <div className="mb-3">
-            <ProgressBar fraction={fraction} label={`Schritt ${stepIndex + 1} von ${activeSteps.length}`} />
+            <ProgressBar fraction={fraction} current={stepIndex + 1} total={activeSteps.length} label={STEP_TITLES[step] || ""} />
           </div>
         )}
 
@@ -706,14 +810,15 @@ export default function TarifRechner() {
           {/* ---------- BASICS ---------- */}
           {step === "basics" && (
             <StepShell
-              eyebrow={secondPass ? "Ihr Gasverbrauch" : "Schritt 1 · Ihr Verbrauch"}
+              eyebrow={secondPass ? "Ihr Gasverbrauch" : "Ihr Verbrauch"}
               title={secondPass ? "Wo und wie viel Gas verbrauchen Sie?" : "Wo wohnen Sie und wie groß ist Ihr Haushalt?"}
-              subtitle="Postleitzahl und Haushaltsgröße reichen für eine erste Einschätzung."
-              footer={<NavButtons onBack={back} onNext={next} disabled={!canNext} />}
+              subtitle="Postleitzahl und Haushaltsgröße reichen für eine erste Einschätzung — Ihr Ergebnis sehen Sie sofort."
+              footer={<NavButtons onNext={next} disabled={!canNext} />}
             >
               <Field label="Postleitzahl" error={err("plz")}>
                 <TextInput
                   inputMode="numeric"
+                  autoComplete="postal-code"
                   maxLength={5}
                   placeholder="z. B. 44135"
                   value={data.plz}
@@ -751,7 +856,7 @@ export default function TarifRechner() {
             </StepShell>
           )}
 
-          {/* ---------- WECHSELWEG (subtile Bonitätsfrage) ---------- */}
+          {/* ---------- WECHSELWEG ---------- */}
           {step === "wechselweg" && (
             <StepShell
               eyebrow="Ihr Wechselweg"
@@ -778,7 +883,7 @@ export default function TarifRechner() {
             </StepShell>
           )}
 
-          {/* ---------- EMPFEHLUNG (ein Tarif) ---------- */}
+          {/* ---------- EMPFEHLUNG ---------- */}
           {step === "empfehlung" && (
             <StepShell
               eyebrow="Unsere Empfehlung für Sie"
@@ -792,7 +897,7 @@ export default function TarifRechner() {
             >
               {preis.loading && (
                 <div className="rounded-2xl p-5 text-center" style={{ border: `1.5px solid ${c.line}` }}>
-                  <p className="text-sm" style={{ color: c.stone }}>
+                  <p className="text-sm m-0" style={{ color: c.stone }}>
                     Ihr Tarif wird ermittelt…
                   </p>
                 </div>
@@ -806,7 +911,7 @@ export default function TarifRechner() {
                         {preis.anzeigeName || "Ihr passender Tarif"}
                       </span>
                       {preis.tarifSub && (
-                        <p className="text-xs mt-1" style={{ color: c.inkSoft }}>
+                        <p className="text-xs mt-1 mb-0" style={{ color: c.inkSoft }}>
                           {preis.tarifSub}
                         </p>
                       )}
@@ -849,7 +954,7 @@ export default function TarifRechner() {
                       </div>
                     </>
                   ) : (
-                    <p className="text-sm mt-4" style={{ color: c.inkSoft }}>
+                    <p className="text-sm mt-4 mb-0" style={{ color: c.inkSoft }}>
                       Der genaue Preis für Ihre Postleitzahl wird individuell berechnet und Ihnen vor Abschluss transparent mitgeteilt.
                     </p>
                   )}
@@ -870,13 +975,55 @@ export default function TarifRechner() {
             </StepShell>
           )}
 
+          {/* ---------- KONTAKT (direkt nach der Empfehlung — Lead-Sicherung) ---------- */}
+          {step === "kontakt" && (
+            <StepShell
+              eyebrow="Fast geschafft"
+              title="Wohin dürfen wir Ihr Angebot schicken?"
+              subtitle="Sie erhalten Ihr persönliches Angebot innerhalb weniger Stunden — per E-Mail oder SMS. Kein Spam, keine Werbeanrufe."
+              footer={<NavButtons onBack={back} onNext={next} disabled={!canNext} />}
+            >
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Vorname" error={err("vorname")}>
+                  <TextInput autoComplete="given-name" value={data.vorname} isError={!!err("vorname")} onBlur={() => touch("vorname")} onChange={(e) => update({ vorname: e.target.value })} />
+                </Field>
+                <Field label="Nachname" error={err("nachname")}>
+                  <TextInput autoComplete="family-name" value={data.nachname} isError={!!err("nachname")} onBlur={() => touch("nachname")} onChange={(e) => update({ nachname: e.target.value })} />
+                </Field>
+              </div>
+
+              {!telefonFromLink && (
+                <Field label="Handynummer" hint="Für Rückfragen und die Status-Updates zu Ihrem Wechsel." error={err("telefon")}>
+                  <TextInput
+                    type="tel"
+                    autoComplete="tel"
+                    inputMode="tel"
+                    placeholder="z. B. 0176 12345678"
+                    value={data.telefon}
+                    isError={!!err("telefon")}
+                    onBlur={() => touch("telefon")}
+                    onChange={(e) => update({ telefon: e.target.value })}
+                  />
+                </Field>
+              )}
+
+              <Field label="E-Mail-Adresse" error={err("email")}>
+                <TextInput type="email" autoComplete="email" inputMode="email" placeholder="z. B. max@beispiel.de" value={data.email} isError={!!err("email")} onBlur={() => touch("email")} onChange={(e) => update({ email: e.target.value })} />
+              </Field>
+
+              <p className="text-xs leading-relaxed" style={{ color: c.stone }}>
+                Ihre Daten werden ausschließlich für Ihre Tarifanfrage verwendet und nicht an unbeteiligte Dritte weitergegeben.
+              </p>
+            </StepShell>
+          )}
+
           {/* ---------- DOKUMENTE ---------- */}
           {step === "dokumente" && (
             <StepShell
               eyebrow="Schneller mit Unterlagen"
               title="Haben Sie eine Rechnung oder Vertragsbestätigung zur Hand?"
               subtitle="Foto oder Datei hochladen — dann müssen Sie weniger von Hand eintragen. Nichts zur Hand? Kein Problem."
-              footer={<NavButtons onBack={back} onNext={next} nextLabel={isLastStep ? (sending ? "Wird gesendet…" : "Angaben absenden") : "Weiter"} disabled={!canNext || (isLastStep && sending)} />}
+              footer={<NavButtons onBack={back} onNext={next} nextLabel={isLastStep ? "Angaben absenden" : "Weiter"} disabled={!canNext} loading={isLastStep && sending} />}
             >
               <label
                 className="w-full flex flex-col items-center justify-center gap-2 rounded-2xl px-5 py-8 text-sm font-bold cursor-pointer text-center"
@@ -887,23 +1034,8 @@ export default function TarifRechner() {
                   fontFamily: fontDisplay,
                 }}
               >
-                {data.dokumentUpload && data.dokumentUpload.length > 0 ? (
-                  <div className="flex flex-col items-center gap-1">
-                    {data.dokumentUpload.map((file, i) => (
-                      <span key={i} className="flex items-center gap-1.5">
-                        <Check size={16} /> {file.name}
-                      </span>
-                    ))}
-                    <span className="text-xs mt-1 font-normal" style={{ color: c.stone }}>
-                      Weitere Datei hinzufügen?
-                    </span>
-                  </div>
-                ) : (
-                  <>
-                    <Camera size={20} />
-                    Fotos aufnehmen oder Dateien hochladen
-                  </>
-                )}
+                <Camera size={20} />
+                {data.dokumentUpload && data.dokumentUpload.length > 0 ? "Weitere Datei hinzufügen" : "Foto aufnehmen oder Datei hochladen"}
                 <input
                   type="file"
                   accept="image/*,.pdf"
@@ -912,13 +1044,35 @@ export default function TarifRechner() {
                   onChange={async (e) => {
                     const files = Array.from(e.target.files || []);
                     if (files.length === 0) return;
+                    const tooBig = files.find((f) => f.size > 10 * 1024 * 1024);
+                    if (tooBig) {
+                      alert(`Die Datei "${tooBig.name}" ist größer als 10 MB. Bitte ein kleineres Foto wählen oder per WhatsApp nachreichen.`);
+                      e.target.value = "";
+                      return;
+                    }
                     const newFiles = await Promise.all(
                       files.map(async (f) => ({ name: f.name, mimetype: f.type, base64: await readFileAsBase64(f) }))
                     );
                     update({ dokumentUpload: [...(data.dokumentUpload || []), ...newFiles], dokumentSpaeter: false });
+                    e.target.value = "";
                   }}
                 />
               </label>
+
+              {data.dokumentUpload && data.dokumentUpload.length > 0 && (
+                <div className="space-y-2">
+                  {data.dokumentUpload.map((file, i) => (
+                    <div key={i} className="flex items-center justify-between gap-2 rounded-xl px-4 py-2.5" style={{ background: c.greenTint, border: `1px solid #C8EBD8` }}>
+                      <span className="flex items-center gap-2 text-sm truncate" style={{ color: c.greenDark }}>
+                        <Check size={15} className="flex-shrink-0" /> <span className="truncate">{file.name}</span>
+                      </span>
+                      <button onClick={() => removeDokument(i)} aria-label={`${file.name} entfernen`} className="flex-shrink-0 p-1 rounded-full" style={{ color: c.inkSoft }}>
+                        <X size={15} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               <div className="flex items-center gap-2 text-xs" style={{ color: c.stone }}>
                 <span className="h-px flex-1" style={{ background: c.line }} />
@@ -926,39 +1080,27 @@ export default function TarifRechner() {
                 <span className="h-px flex-1" style={{ background: c.line }} />
               </div>
 
-              <button
-                onClick={() => update({ dokumentSpaeter: !data.dokumentSpaeter, dokumentUpload: null })}
-                className="w-full text-left flex items-center gap-3 rounded-xl px-4 py-3"
-                style={{ background: data.dokumentSpaeter ? c.blueTint : c.surface, border: `1.5px solid ${data.dokumentSpaeter ? c.blue : c.line}` }}
-              >
-                <div
-                  className="w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0"
-                  style={{ background: data.dokumentSpaeter ? c.blue : c.surface, border: `1.5px solid ${data.dokumentSpaeter ? c.blue : c.line}` }}
-                >
-                  {data.dokumentSpaeter && <Check size={13} color="#fff" />}
-                </div>
-                <span className="text-sm" style={{ color: c.ink }}>
-                  Ich habe nichts vorliegen — Daten selbst eingeben
-                </span>
-              </button>
+              <CheckboxRow checked={data.dokumentSpaeter} onClick={() => update({ dokumentSpaeter: !data.dokumentSpaeter, dokumentUpload: null })}>
+                Ich habe nichts vorliegen — Daten selbst eingeben
+              </CheckboxRow>
             </StepShell>
           )}
 
-          {/* ---------- PERSÖNLICH ---------- */}
-          {step === "persoenlich" && (
+          {/* ---------- VERTRAG ---------- */}
+          {step === "vertrag" && (
             <StepShell
-              eyebrow="Ihre Kontaktdaten"
-              title={istIndividuell ? "Wie erreichen wir Sie am besten?" : data.neueinzug ? "Auf wen soll der neue Vertrag laufen?" : "Auf wen läuft der aktuelle Vertrag?"}
+              eyebrow="Vertragsdaten"
+              title={data.dokumentUpload ? "Nur noch Ihr Geburtsdatum" : data.neueinzug ? "Auf wen soll der neue Vertrag laufen?" : "Auf wen läuft der aktuelle Vertrag?"}
               subtitle={
-                istIndividuell
-                  ? "Wir melden uns persönlich mit einer passenden Lösung — meist innerhalb weniger Stunden."
+                data.dokumentUpload
+                  ? "Alle weiteren Daten entnehmen wir Ihrem hochgeladenen Dokument."
                   : data.neueinzug
                   ? "Da Sie neu einziehen, kann der Vertrag direkt auf Sie angemeldet werden."
                   : "Für den Anbieterwechsel muss der Name exakt mit dem bisherigen Vertragsinhaber übereinstimmen."
               }
-              footer={<NavButtons onBack={back} onNext={next} nextLabel={isLastStep ? (sending ? "Wird gesendet…" : "Angaben absenden") : "Weiter"} disabled={!canNext || (isLastStep && sending)} />}
+              footer={<NavButtons onBack={back} onNext={next} nextLabel={isLastStep ? "Angaben absenden" : "Weiter"} disabled={!canNext} loading={isLastStep && sending} />}
             >
-              {!data.dokumentUpload && !istIndividuell && (
+              {!data.dokumentUpload && (
                 <div>
                   <span className="block text-sm font-semibold mb-2" style={{ color: c.ink, fontFamily: fontDisplay }}>
                     Um welche Situation handelt es sich?
@@ -972,7 +1114,7 @@ export default function TarifRechner() {
 
               {data.dokumentUpload && <InfoNote>Name, Adresse und Vertragsdaten entnehmen wir Ihrem hochgeladenen Dokument.</InfoNote>}
 
-              {!data.dokumentUpload && !data.neueinzug && !istIndividuell && (
+              {!data.dokumentUpload && !data.neueinzug && (
                 <Field
                   label={data.sparte === "strom" ? "Welcher Anbieter beliefert Sie aktuell mit Strom?" : "Welcher Anbieter beliefert Sie aktuell mit Gas?"}
                   hint="So wissen wir, welchen Vertrag wir für Sie kündigen müssen."
@@ -981,27 +1123,17 @@ export default function TarifRechner() {
                 </Field>
               )}
 
-              {!data.dokumentUpload && !data.neueinzug && !istIndividuell && (
-                <Field
-                  label="Ihre Kundennummer beim aktuellen Anbieter"
-                  error={err("kundennummerAlt")}
-                  hint="Steht auf Ihrer letzten Abrechnung oder im Verwendungszweck Ihrer Überweisung."
-                >
-                  <TextInput
-                    placeholder="z. B. K-4471293 oder 88213X"
-                    value={data.kundennummerAlt}
-                    isError={!!err("kundennummerAlt")}
-                    onBlur={() => touch("kundennummerAlt")}
-                    onChange={(e) => update({ kundennummerAlt: e.target.value })}
-                  />
+              {!data.dokumentUpload && !data.neueinzug && (
+                <Field label="Ihre Kundennummer beim aktuellen Anbieter" error={err("kundennummerAlt")} hint="Steht auf Ihrer letzten Abrechnung.">
+                  <TextInput placeholder="z. B. K-4471293" value={data.kundennummerAlt} isError={!!err("kundennummerAlt")} onBlur={() => touch("kundennummerAlt")} onChange={(e) => update({ kundennummerAlt: e.target.value })} />
                 </Field>
               )}
 
-              {!data.dokumentUpload && data.neueinzug && !istIndividuell && (
+              {!data.dokumentUpload && data.neueinzug && (
                 <Field
                   label="Gewünschtes Einzugs- / Lieferdatum"
                   error={err("einzugsdatum")}
-                  hint={`Frühestens möglich ab ${minEinzugsdatumStr()} (5 Werktage Vorlauf). Eine rückwirkende Anmeldung ist nicht mehr möglich.`}
+                  hint={`Frühestens möglich ab ${minEinzugsdatumStr()} (5 Werktage Vorlauf). Rückwirkende Anmeldungen sind nicht mehr möglich.`}
                 >
                   <input
                     type="date"
@@ -1015,60 +1147,31 @@ export default function TarifRechner() {
                 </Field>
               )}
 
-              {!telefonFromLink && (
-                <Field label="Ihre Handynummer" hint="Damit wir Sie zum Status Ihrer Anfrage erreichen können." error={err("telefon")}>
-                  <TextInput
-                    type="tel"
-                    placeholder="z. B. 0176 12345678"
-                    value={data.telefon}
-                    isError={!!err("telefon")}
-                    onBlur={() => touch("telefon")}
-                    onChange={(e) => update({ telefon: e.target.value })}
-                  />
-                </Field>
-              )}
-
-              <Field label="E-Mail-Adresse" error={err("email")}>
-                <TextInput type="email" placeholder="z. B. max@beispiel.de" value={data.email} isError={!!err("email")} onBlur={() => touch("email")} onChange={(e) => update({ email: e.target.value })} />
-              </Field>
-
               <Field label="Geburtsdatum" error={err("geburtsdatum")}>
-                <TextInput type="date" value={data.geburtsdatum} isError={!!err("geburtsdatum")} onBlur={() => touch("geburtsdatum")} onChange={(e) => update({ geburtsdatum: e.target.value })} />
+                <TextInput type="date" autoComplete="bday" value={data.geburtsdatum} isError={!!err("geburtsdatum")} onBlur={() => touch("geburtsdatum")} onChange={(e) => update({ geburtsdatum: e.target.value })} />
               </Field>
 
               {!data.dokumentUpload && (
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Vorname" error={err("vorname")}>
-                    <TextInput value={data.vorname} isError={!!err("vorname")} onBlur={() => touch("vorname")} onChange={(e) => update({ vorname: e.target.value })} />
-                  </Field>
-                  <Field label="Nachname" error={err("nachname")}>
-                    <TextInput value={data.nachname} isError={!!err("nachname")} onBlur={() => touch("nachname")} onChange={(e) => update({ nachname: e.target.value })} />
-                  </Field>
-                </div>
-              )}
-
-              {!data.dokumentUpload && (
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="col-span-2">
-                    <Field label="Straße" error={err("strasse")}>
-                      <TextInput value={data.strasse} isError={!!err("strasse")} onBlur={() => touch("strasse")} onChange={(e) => update({ strasse: e.target.value })} />
+                <>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="col-span-2">
+                      <Field label="Straße" error={err("strasse")}>
+                        <TextInput autoComplete="address-line1" value={data.strasse} isError={!!err("strasse")} onBlur={() => touch("strasse")} onChange={(e) => update({ strasse: e.target.value })} />
+                      </Field>
+                    </div>
+                    <Field label="Nr." error={err("hausnummer")}>
+                      <TextInput value={data.hausnummer} isError={!!err("hausnummer")} onBlur={() => touch("hausnummer")} onChange={(e) => update({ hausnummer: e.target.value })} />
                     </Field>
                   </div>
-                  <Field label="Nr." error={err("hausnummer")}>
-                    <TextInput value={data.hausnummer} isError={!!err("hausnummer")} onBlur={() => touch("hausnummer")} onChange={(e) => update({ hausnummer: e.target.value })} />
-                  </Field>
-                </div>
-              )}
-
-              {!data.dokumentUpload && (
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Postleitzahl" error={err("plz")}>
-                    <TextInput inputMode="numeric" maxLength={5} value={data.plz} isError={!!err("plz")} onBlur={() => touch("plz")} onChange={(e) => update({ plz: e.target.value.replace(/\D/g, "").slice(0, 5) })} />
-                  </Field>
-                  <Field label="Ort" error={err("ort")}>
-                    <TextInput value={data.ort} isError={!!err("ort")} onBlur={() => touch("ort")} onChange={(e) => update({ ort: e.target.value })} />
-                  </Field>
-                </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Postleitzahl" error={err("plz")}>
+                      <TextInput inputMode="numeric" autoComplete="postal-code" maxLength={5} value={data.plz} isError={!!err("plz")} onBlur={() => touch("plz")} onChange={(e) => update({ plz: e.target.value.replace(/\D/g, "").slice(0, 5) })} />
+                    </Field>
+                    <Field label="Ort" error={err("ort")}>
+                      <TextInput autoComplete="address-level2" value={data.ort} isError={!!err("ort")} onBlur={() => touch("ort")} onChange={(e) => update({ ort: e.target.value })} />
+                    </Field>
+                  </div>
+                </>
               )}
             </StepShell>
           )}
@@ -1082,35 +1185,28 @@ export default function TarifRechner() {
               footer={<NavButtons onBack={back} onNext={next} disabled={!canNext} />}
             >
               <div className="grid grid-cols-1 gap-2">
-                <ToggleCard selected={data.zahlungsart === "lastschrift"} onClick={() => update({ zahlungsart: "lastschrift" })} title="SEPA-Lastschrift" sub="Der Anbieter zieht die Beträge automatisch ein" />
+                <ToggleCard selected={data.zahlungsart === "lastschrift"} onClick={() => update({ zahlungsart: "lastschrift" })} title="SEPA-Lastschrift" sub="Der Anbieter zieht die Beträge automatisch ein — nichts vergessen, keine Mahnungen" />
                 <ToggleCard selected={data.zahlungsart === "selbstzahler"} onClick={() => update({ zahlungsart: "selbstzahler", iban: "", bankdatenSpaeter: false })} title="Selbstzahler / Überweisung" sub="Sie überweisen die Beträge selbst" />
               </div>
 
               {data.zahlungsart === "lastschrift" && !data.bankdatenSpaeter && (
-                <Field label="IBAN" error={touched.iban && data.iban && !isValidIBAN(data.iban) ? "Diese IBAN scheint nicht korrekt zu sein" : null}>
+                <Field label="IBAN" error={touched.iban && data.iban && !isValidIBAN(data.iban) ? "Diese IBAN scheint nicht korrekt zu sein — bitte prüfen" : null} hint="Wird verschlüsselt übertragen und nur für das SEPA-Mandat verwendet.">
                   <TextInput
+                    autoComplete="off"
+                    inputMode="text"
                     placeholder="DE89 3704 0044 0532 0130 00"
                     value={data.iban}
                     isError={touched.iban && data.iban && !isValidIBAN(data.iban)}
                     onBlur={() => touch("iban")}
-                    onChange={(e) => update({ iban: e.target.value.toUpperCase() })}
+                    onChange={(e) => update({ iban: formatIBAN(e.target.value) })}
                   />
                 </Field>
               )}
 
               {data.zahlungsart === "lastschrift" && (
-                <button
-                  onClick={() => update({ bankdatenSpaeter: !data.bankdatenSpaeter, iban: "" })}
-                  className="w-full text-left flex items-center gap-3 rounded-xl px-4 py-3"
-                  style={{ background: data.bankdatenSpaeter ? c.blueTint : c.surface, border: `1.5px solid ${data.bankdatenSpaeter ? c.blue : c.line}` }}
-                >
-                  <div className="w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0" style={{ background: data.bankdatenSpaeter ? c.blue : c.surface, border: `1.5px solid ${data.bankdatenSpaeter ? c.blue : c.line}` }}>
-                    {data.bankdatenSpaeter && <Check size={13} color="#fff" />}
-                  </div>
-                  <span className="text-sm" style={{ color: c.ink }}>
-                    Ich reiche die IBAN später nach
-                  </span>
-                </button>
+                <CheckboxRow checked={data.bankdatenSpaeter} onClick={() => update({ bankdatenSpaeter: !data.bankdatenSpaeter, iban: "" })}>
+                  Ich reiche die IBAN später per WhatsApp nach
+                </CheckboxRow>
               )}
             </StepShell>
           )}
@@ -1121,14 +1217,14 @@ export default function TarifRechner() {
               eyebrow="Letzter Schritt"
               title={data.sparte === "strom" ? "Ihre Stromzählernummer" : "Ihre Gaszählernummer"}
               subtitle="Fehlt Ihnen die Nummer gerade, ist das kein Problem — ein Foto genügt, oder Sie reichen sie später nach."
-              footer={<NavButtons onBack={back} onNext={next} nextLabel={sending ? "Wird gesendet…" : "Angaben absenden"} disabled={!canNext || sending} />}
+              footer={<NavButtons onBack={back} onNext={next} nextLabel="Angaben absenden" disabled={!canNext} loading={sending} />}
             >
-              {data.dokumentUpload && <InfoNote>Falls Ihre Zählernummer bereits im hochgeladenen Dokument sichtbar ist, können Sie diesen Schritt auch überspringen.</InfoNote>}
+              {data.dokumentUpload && <InfoNote>Falls Ihre Zählernummer bereits im hochgeladenen Dokument sichtbar ist, können Sie diesen Schritt einfach mit „Angaben absenden" abschließen.</InfoNote>}
 
               {!data.zaehlerSpaeter && (
                 <div className="space-y-3">
                   <TextInput placeholder="z. B. 1EMH0012345678" value={data.zaehlernummer} onChange={(e) => update({ zaehlernummer: e.target.value })} />
-                  <Field label="Zählpunktbezeichnung / MaLo-ID (optional)" hint="11-stellig, beginnt meist mit 1 oder 5 — steht auf der letzten Abrechnung.">
+                  <Field label="Zählpunktbezeichnung / MaLo-ID (optional)" hint="11-stellig — steht auf der letzten Abrechnung.">
                     <TextInput placeholder="z. B. 51234567890" value={data.maloId} onChange={(e) => update({ maloId: e.target.value })} maxLength={11} />
                   </Field>
                   <div className="flex items-center gap-2 text-xs" style={{ color: c.stone }}>
@@ -1140,6 +1236,17 @@ export default function TarifRechner() {
                     {data.zaehlerFoto ? (
                       <>
                         <Check size={16} /> {data.zaehlerFoto.name}
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            update({ zaehlerFoto: null });
+                          }}
+                          aria-label="Foto entfernen"
+                          className="p-0.5"
+                          style={{ color: c.inkSoft }}
+                        >
+                          <X size={14} />
+                        </button>
                       </>
                     ) : (
                       <>
@@ -1153,27 +1260,42 @@ export default function TarifRechner() {
                       onChange={async (e) => {
                         const file = e.target.files?.[0];
                         if (!file) return;
+                        if (file.size > 10 * 1024 * 1024) {
+                          alert("Das Foto ist größer als 10 MB. Bitte ein kleineres Foto wählen.");
+                          e.target.value = "";
+                          return;
+                        }
                         const base64 = await readFileAsBase64(file);
                         update({ zaehlerFoto: { name: file.name, mimetype: file.type, base64 } });
+                        e.target.value = "";
                       }}
                     />
                   </label>
                 </div>
               )}
 
-              <button
-                onClick={() => update({ zaehlerSpaeter: !data.zaehlerSpaeter, zaehlernummer: "", zaehlerFoto: null })}
-                className="w-full text-left flex items-center gap-3 rounded-xl px-4 py-3"
-                style={{ background: data.zaehlerSpaeter ? c.blueTint : c.surface, border: `1.5px solid ${data.zaehlerSpaeter ? c.blue : c.line}` }}
-              >
-                <div className="w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0" style={{ background: data.zaehlerSpaeter ? c.blue : c.surface, border: `1.5px solid ${data.zaehlerSpaeter ? c.blue : c.line}` }}>
-                  {data.zaehlerSpaeter && <Check size={13} color="#fff" />}
-                </div>
-                <span className="text-sm" style={{ color: c.ink }}>
-                  Ich reiche die Zählernummer per WhatsApp-Foto nach
-                </span>
-              </button>
+              <CheckboxRow checked={data.zaehlerSpaeter} onClick={() => update({ zaehlerSpaeter: !data.zaehlerSpaeter, zaehlernummer: "", zaehlerFoto: null })}>
+                Ich reiche die Zählernummer per WhatsApp-Foto nach
+              </CheckboxRow>
             </StepShell>
+          )}
+
+          {/* ---------- SUBMIT-FEHLER (Eskalation) ---------- */}
+          {submitError && (
+            <div className="mt-4 space-y-3">
+              <InfoNote tone="warn">
+                Ihre Angaben konnten gerade nicht übertragen werden — das kann an einer instabilen Internetverbindung liegen. Ihre Eingaben sind noch da: Versuchen Sie es einfach nochmal, oder schreiben Sie uns direkt per WhatsApp — wir kümmern uns sofort darum.
+              </InfoNote>
+              <a
+                href={WA_LINK}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full flex items-center justify-center gap-2 rounded-full px-5 py-3 text-[15px] font-extrabold no-underline"
+                style={{ background: "#25D366", color: "#073B1D", fontFamily: fontDisplay }}
+              >
+                <MessageCircle size={16} /> Per WhatsApp melden
+              </a>
+            </div>
           )}
 
           {/* ---------- ABSCHLUSS ---------- */}
@@ -1196,9 +1318,7 @@ export default function TarifRechner() {
               {heizungAbschluss && (
                 <div className="mb-4 text-left">
                   <InfoNote>
-                    Für {heizungAbschluss === "waermepumpe" ? "Wärmepumpen" : "Nachtspeicherheizungen"} gibt es keine
-                    pauschalen Tarife von der Stange — ob und welche Möglichkeiten es für Sie gibt, klären wir gemeinsam
-                    in einem kurzen persönlichen Gespräch. Ihr Ansprechpartner meldet sich dazu direkt bei Ihnen.
+                    Für {heizungAbschluss === "waermepumpe" ? "Wärmepumpen" : "Nachtspeicherheizungen"} gibt es keine pauschalen Tarife von der Stange — ob und welche Möglichkeiten es für Sie gibt, klären wir gemeinsam in einem kurzen persönlichen Gespräch. Ihr Ansprechpartner meldet sich dazu direkt bei Ihnen.
                   </InfoNote>
                 </div>
               )}
@@ -1209,12 +1329,12 @@ export default function TarifRechner() {
                     Ihre Anfrage
                   </div>
                   <div className="text-[15px] font-bold" style={{ color: c.ink, fontFamily: fontDisplay }}>
-                    {completedSpartes.length >= 2 ? "Strom & Gas" : (preis.anzeigeName || data.sparte === "strom" ? "Stromtarif" : "Gastarif")}
+                    {completedSpartes.length >= 2 ? "Strom & Gas" : preis.anzeigeName || (data.sparte === "strom" ? "Stromtarif" : "Gastarif")}
                   </div>
                 </div>
               )}
 
-              {/* Wie geht es weiter? */}
+              {/* Wie geht es weiter */}
               <div className="rounded-2xl p-4 mb-4 text-left" style={{ background: c.bg, border: `1px solid ${c.line}` }}>
                 <div className="text-sm font-extrabold mb-3" style={{ color: c.ink, fontFamily: fontDisplay }}>
                   So geht es jetzt weiter
@@ -1251,22 +1371,21 @@ export default function TarifRechner() {
               </div>
 
               {data.zaehlerSpaeter && (
-                <div className="mb-3">
+                <div className="mb-3 text-left">
                   <InfoNote>Bitte halten Sie Ihren Zählerstand griffbereit — wir schreiben Ihnen gleich per WhatsApp, wie Sie das Foto einfach nachreichen können.</InfoNote>
                 </div>
               )}
               {data.bankdatenSpaeter && (
-                <div className="mb-3">
+                <div className="mb-3 text-left">
                   <InfoNote>Die IBAN können Sie jederzeit direkt im WhatsApp-Chat nachreichen.</InfoNote>
                 </div>
               )}
 
-              {/* Direkter WhatsApp-Kontakt */}
               <a
-                href="https://api.whatsapp.com/send/?phone=4915114168093&text=Hallo%2C%20ich%20habe%20gerade%20den%20Tarifrechner%20ausgef%C3%BCllt%20und%20habe%20eine%20R%C3%BCckfrage."
+                href={WA_LINK}
                 target="_blank"
-                rel="noopener"
-                className="w-full flex items-center justify-center gap-2 rounded-full px-5 py-3 text-[15px] font-extrabold mt-4"
+                rel="noopener noreferrer"
+                className="w-full flex items-center justify-center gap-2 rounded-full px-5 py-3 text-[15px] font-extrabold mt-4 no-underline"
                 style={{ background: "#25D366", color: "#073B1D", fontFamily: fontDisplay }}
               >
                 <MessageCircle size={16} /> Fragen? Direkt per WhatsApp schreiben
@@ -1293,7 +1412,7 @@ export default function TarifRechner() {
                   </button>
                 ) : (
                   <div className="rounded-2xl p-4 space-y-2.5" style={{ background: c.bg, border: `1px solid ${c.line}` }}>
-                    <p className="text-sm" style={{ color: c.inkSoft }}>
+                    <p className="text-sm m-0" style={{ color: c.inkSoft }}>
                       Welche Heizungsart nutzen Sie?
                     </p>
                     <ToggleCard selected={false} onClick={() => startHeizungFlow("waermepumpe")} title="Wärmepumpe" sub="Wir prüfen persönlich die passende Option" />
@@ -1306,12 +1425,12 @@ export default function TarifRechner() {
                   className="w-full flex items-center justify-center gap-2 rounded-full px-5 py-3.5 text-[15px] font-extrabold"
                   style={{ background: c.greenTint, color: c.greenDark, fontFamily: fontDisplay }}
                 >
-                  <Share2 size={16} /> {copied ? "Link kopiert ✓" : "Mit Freunden teilen"}
+                  <Share2 size={16} /> {copied ? "Link kopiert ✓" : "Kennen Sie jemanden, der zu viel zahlt? Link teilen"}
                 </button>
               </div>
 
               <div className="flex items-center justify-center gap-1.5 text-xs mt-6" style={{ color: c.stone }}>
-                <Home size={13} /> kwh-beratung.de
+                <Home size={13} /> <a href="https://kwh-beratung.de" className="no-underline" style={{ color: c.stone }}>kwh-beratung.de</a>
               </div>
             </div>
           )}
@@ -1325,10 +1444,10 @@ export default function TarifRechner() {
           <a href="https://kwh-beratung.de" target="_blank" rel="noopener noreferrer" className="underline" style={{ color: c.stone }}>
             kwh-beratung.de
           </a>
-          <a href="https://kwh-beratung.de/impressum.html" target="_blank" rel="noopener noreferrer" className="underline" style={{ color: c.stone }}>
+          <a href="https://kwh-beratung.de/impressum" target="_blank" rel="noopener noreferrer" className="underline" style={{ color: c.stone }}>
             Impressum
           </a>
-          <a href="https://kwh-beratung.de/datenschutz.html" target="_blank" rel="noopener noreferrer" className="underline" style={{ color: c.stone }}>
+          <a href="https://kwh-beratung.de/datenschutz" target="_blank" rel="noopener noreferrer" className="underline" style={{ color: c.stone }}>
             Datenschutz
           </a>
         </div>
