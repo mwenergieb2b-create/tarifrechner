@@ -612,13 +612,17 @@ export default function TarifRechner() {
   async function next() {
     const i = activeSteps.indexOf(step);
 
-    // Lead-Sicherung: direkt nach dem Kontakt-Schritt wird der Lead
-    // im Hintergrund an Pipedrive übermittelt (fire-and-forget).
-    // Der finale Submit aktualisiert denselben Deal über die Telefonnummer.
-    if (step === "kontakt" && !leadSecured && !secondPass) {
-      setLeadSecured(true);
-      submitToPipedrive(data, "lead_vorab").catch(() => {});
-    }
+    // Lead-Sicherung TEMPORÄR DEAKTIVIERT:
+    // Der Lead-Vorab-Submit wurde ausgebaut, weil er zusammen mit dem
+    // finalen "vollstaendig"-Submit zwei Deals in Pipedrive angelegt hat
+    // (Race Condition: der zweite Request kam bei Pipedrive an, bevor
+    // der erste Deal indexiert war). Für den Livegang reicht der finale
+    // Submit am Ende. Später wieder aktivieren, sobald in n8n ein
+    // Wait-Node den zweiten Durchlauf verzögert.
+    // if (step === "kontakt" && !leadSecured && !secondPass) {
+    //   setLeadSecured(true);
+    //   submitToPipedrive(data, "lead_vorab").catch(() => {});
+    // }
 
     if (i < activeSteps.length - 1) return goTo(activeSteps[i + 1]);
 
