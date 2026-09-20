@@ -10,6 +10,10 @@
 //
 // Ablauf pro Submit:
 //   1. Person per Telefonnummer suchen -> vorhanden? updaten : neu anlegen
+//      Die Telefonnummer wird dafür NORMALISIERT (siehe normalizePhone),
+//      da z.B. Facebook-Lead-Ads und der manuell ausgefüllte Rechner die
+//      Nummer unterschiedlich formatieren (Leerzeichen, +49 vs. 0, etc.)
+//      und Pipedrives Textsuche sonst keinen Treffer findet -> Duplikat.
 //   2. Offenen Deal dieser Person in der Ziel-Pipeline suchen
 //      -> vorhanden? updaten (so wird aus "lead_vorab" + "vollstaendig"
 //         am Ende EIN Deal, nicht zwei) : neu anlegen
@@ -54,6 +58,45 @@ async function pd(path, options = {}) {
     throw new Error(`Pipedrive-Fehler bei ${path}: ${res.status} ${JSON.stringify(json)}`);
   }
   return json.data;
+}
+
+/* ---------------------------------------------------------
+   Telefonnummer-Normalisierung
+   ---------------------------------------------------------
+   Facebook/Instagram-Lead-Ads und das manuelle Ausfüllen im
+   Rechner liefern Telefonnummern fast nie im selben Format
+   (Leerzeichen, Klammern, Bindestriche, "0176..." vs.
+   "+49176..." vs. "0049176..."). Pipedrives Textsuche matcht
+   aber nur auf den gespeicherten String -> ohne Normalisierung
+   findet findPersonByPhone() den Bestandskontakt nicht und es
+   entsteht ein Duplikat. Deshalb wird JEDE Nummer vor dem
+   Vergleichen und vor dem Speichern auf ein einheitliches
+   Format (E.164, Annahme: Deutschland) gebracht.
+--------------------------------------------------------- */
+function normalizePhone(raw) {
+  if (!raw) return "";
+  let digits = String(raw).trim().replace(/[^\d+]/g, "");
+  if (!digits) return "";
+
+  if (digits.startsWith("00")) {
+    digits = "+" + digits.slice(2);
+  } else if (digits.startsWith("0")) {
+    digits = "+49" + digits.slice(1);
+  } else if (!digits.startsWith("+")) {
+    digits = "+49" + digits;
+  }
+  return digits;
+}
+
+// Für die Pipedrive-Suche selbst wird bewusst NICHT die vollständige
+// normalisierte Nummer verwendet, sondern nur der national eindeutige
+// Ziffernblock ohne Ländervorwahl. Grund: Pipedrives Fuzzy-Suche auf
+// Telefonfeldern reagiert empfindlich auf führende Zeichen wie "+" und
+// liefert bei unterschiedlicher Formatierung sonst false negatives.
+function phoneSearchTerm(raw) {
+  const normalized = normalizePhone(raw);
+  const nationalDigits = normalized.replace(/^\+49/, "").replace(/^\+/, "");
+  return nationalDigits.slice(-9); // letzte 9 Ziffern reichen zur Identifikation
 }
 
 /* ---------------------------------------------------------
@@ -148,9 +191,45 @@ async function buildCustomFields(entity, config, values) {
 --------------------------------------------------------- */
 async function findPersonByPhone(telefon) {
   if (!telefon) return null;
-  const result = await pd(`/persons/search?term=${encodeURIComponent(telefon)}&fields=phone&exact_match=false`);
-  const item = result?.items?.[0]?.item;
-  return item ? item.id : null;
+  const target = normalizePhone(telefon);
+  const searchTerm = phoneSearchTerm(telefon);
+  if (searchTerm.length < 6) return null; // zu kurz für eine sinnvolle Suche
+
+  const result = await pd(`/persons/search?term=${encodeURIComponent(searchTerm)}&fields=phone&exact_match=false`);
+  const items = result?.items || [];
+
+  // Pipedrives Fuzzy-Suche kann Nachbartreffer liefern. Deshalb wird jeder
+  // Treffer zusätzlich anhand seiner hinterlegten Telefonnummer(n) —
+  // normalisiert — GENAU gegen die Zielnummer verifiziert, bevor er als
+  // "derselbe Kontakt" gilt.
+  for (const it of items) {
+    const person = it.item;
+    const phones = person.phones && person.phones.length
+      ? person.phones
+      : (person.phone ? [{ value: person.phone }] : []);
+    if (phones.some((p) => normalizePhone(p.value) === target)) {
+      return person.id;
+    }
+  }
+
+  // Manche Pipedrive-Pläne liefern in der Suchergebnis-Kurzform keine
+  // Telefonnummern mit (nur id/name). In dem Fall die Person einzeln laden
+  // und dort verifizieren, statt den ersten Treffer blind zu übernehmen.
+  for (const it of items) {
+    const personId = it.item?.id;
+    if (!personId) continue;
+    try {
+      const full = await pd(`/persons/${personId}`);
+      const phones = full.phones || (full.phone ? [{ value: full.phone }] : []);
+      if (phones.some((p) => normalizePhone(p.value) === target)) {
+        return personId;
+      }
+    } catch {
+      // ignorieren, nächsten Treffer prüfen
+    }
+  }
+
+  return null;
 }
 
 async function findOpenDealForPerson(personId) {
@@ -163,11 +242,14 @@ async function findOpenDealForPerson(personId) {
 async function upsertPerson(payload) {
   const name = [payload.vorname, payload.nachname].filter(Boolean).join(" ") || payload.telefon || "Rechner-Lead";
   const customFields = await buildCustomFields("person", PERSON_FIELD_CONFIG, payload);
+  const normalizedPhone = normalizePhone(payload.telefon);
 
   const body = {
     name,
     ...(payload.email ? { email: [{ value: payload.email, primary: true, label: "work" }] } : {}),
-    ...(payload.telefon ? { phone: [{ value: payload.telefon, primary: true, label: "mobile" }] } : {}),
+    // Telefonnummer wird normalisiert gespeichert, damit künftige Abgleiche
+    // (auch aus anderen Quellen) konsistent funktionieren.
+    ...(normalizedPhone ? { phone: [{ value: normalizedPhone, primary: true, label: "mobile" }] } : {}),
     ...customFields,
   };
 
@@ -187,7 +269,8 @@ async function upsertDeal(payload, personId) {
   // Feste Deal-Felder "Telefonnummer" / "Mail" zusätzlich befüllen (siehe
   // FIXED_DEAL_FIELD_KEYS oben) — läuft bei JEDEM Aufruf mit, also sowohl
   // beim Neuanlegen als auch beim Aktualisieren eines bestehenden Deals.
-  if (payload.telefon) customFields[FIXED_DEAL_FIELD_KEYS.telefon] = payload.telefon;
+  const normalizedPhone = normalizePhone(payload.telefon);
+  if (normalizedPhone) customFields[FIXED_DEAL_FIELD_KEYS.telefon] = normalizedPhone;
   if (payload.email) customFields[FIXED_DEAL_FIELD_KEYS.email] = payload.email;
 
   const body = {
