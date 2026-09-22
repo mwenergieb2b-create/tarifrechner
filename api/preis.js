@@ -2,21 +2,18 @@
 // Server-seitige Tarif-Empfehlung + Preis-Lookup für den Tarifrechner.
 // Läuft als Vercel Serverless Function (ES-Module, da "type": "module").
 //
-// Empfehlungslogik (immer genau EIN Tarif):
-//   Strom, mit Bonitätsprüfung ok        -> ÖkoStrom24 Pur (Vattenfall)
-//   Strom, ohne Bonitätsprüfung, >=1500  -> Plan B Energie NEO T24
-//   Strom, ohne Bonitätsprüfung, 500-1499-> GENO Strom Natur Direkt
-//   Strom, ohne Bonitätsprüfung, <500    -> individuelle Prüfung
-//   Gas,   mit Bonitätsprüfung ok        -> Easy24 Gas PUR (Vattenfall)
-//   Gas,   ohne Bonitätsprüfung, >=5000  -> ELE erdgasFair
-//   Gas,   ohne Bonitätsprüfung, <5000   -> individuelle Prüfung
+// Empfehlungslogik (immer genau EIN Tarif, je nach Bonität + Sparte):
+//   Strom, ohne Bonitätsprüfung -> meinSTADT Strom (SB)  [Stadtwerke Krefeld]
+//   Strom, mit Bonitätsprüfung  -> LichtBlick ÖkoStrom 24
+//   Gas,   ohne Bonitätsprüfung -> meinSTADT Gas (SB)    [Stadtwerke Krefeld]
+//   Gas,   mit Bonitätsprüfung  -> LichtBlick Gas 24
 //
 // Die JSON-Tabellen werden mit wörtlichen Pfaden per readFileSync geladen,
 // damit Vercel sie beim Build erkennt (plus includeFiles in vercel.json).
 //
 // Aufruf:  /api/preis?gruppe=bonitaetsfrei&sparte=strom&plz=60320&verbrauch=3500
 // Antwort: { found, tarif, tarifName, tarifSub, badge, grundpreis, arbeitspreis }
-//   oder   { found: false, individuell: true, grund: "verbrauch_zu_niedrig" }
+//   oder   { found: false, tarif, ... }  (PLZ nicht in der Tabelle -> Preis individuell)
 
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
@@ -25,52 +22,43 @@ import { dirname, join } from "path";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const planb_strom = JSON.parse(readFileSync(join(__dirname, "data/planb_strom.json"), "utf-8"));
-const geno_strom = JSON.parse(readFileSync(join(__dirname, "data/geno_strom.json"), "utf-8"));
-const vattenfall_strom = JSON.parse(readFileSync(join(__dirname, "data/vattenfall_strom.json"), "utf-8"));
-const ele_gas = JSON.parse(readFileSync(join(__dirname, "data/ele_gas.json"), "utf-8"));
-const vattenfall_gas = JSON.parse(readFileSync(join(__dirname, "data/vattenfall_gas.json"), "utf-8"));
+const meinstadt_strom = JSON.parse(readFileSync(join(__dirname, "data/meinstadt_strom.json"), "utf-8"));
+const meinstadt_gas = JSON.parse(readFileSync(join(__dirname, "data/meinstadt_gas.json"), "utf-8"));
+const lichtblick_strom = JSON.parse(readFileSync(join(__dirname, "data/lichtblick_strom.json"), "utf-8"));
+const lichtblick_gas = JSON.parse(readFileSync(join(__dirname, "data/lichtblick_gas.json"), "utf-8"));
 
-const TABLES = { planb_strom, geno_strom, vattenfall_strom, ele_gas, vattenfall_gas };
+const TABLES = { meinstadt_strom, meinstadt_gas, lichtblick_strom, lichtblick_gas };
 
 // tarifName    = vollständiger interner Name (geht in den Payload / Pipedrive)
 // anzeigeName  = was der Kunde sieht (bewusst OHNE Anbieternamen)
 const TARIF_INFO = {
-  planb_strom: {
-    tarifName: "Plan B Energie NEO T24",
-    anzeigeName: "NEO T24",
+  meinstadt_strom: {
+    tarifName: "meinSTADT Strom (SB)",
+    anzeigeName: "Strom SB",
     tarifSub: "Bonitätsfreier Stromtarif, deutschlandweit verfügbar",
     badge: "Keine Bonitätsprüfung",
     laufzeit: "24 Monate Laufzeit",
     preisgarantie: "Preisgarantie",
   },
-  geno_strom: {
-    tarifName: "GENO Strom Natur Direkt",
-    anzeigeName: "Strom Natur Direkt",
-    tarifSub: "Bonitätsfreier Ökostromtarif für kleinere Verbräuche",
+  meinstadt_gas: {
+    tarifName: "meinSTADT Gas (SB)",
+    anzeigeName: "Gas SB",
+    tarifSub: "Bonitätsfreier Gastarif, deutschlandweit verfügbar",
     badge: "Keine Bonitätsprüfung",
     laufzeit: "24 Monate Laufzeit",
     preisgarantie: "Preisgarantie",
   },
-  vattenfall_strom: {
-    tarifName: "ÖkoStrom24 Pur",
-    anzeigeName: "ÖkoStrom24 Pur",
+  lichtblick_strom: {
+    tarifName: "LichtBlick ÖkoStrom 24",
+    anzeigeName: "ÖkoStrom 24",
     tarifSub: "Ökostromtarif, bundesweit verfügbar",
     badge: "Bonitätsprüfung durch Anbieter üblich",
     laufzeit: "24 Monate Laufzeit",
     preisgarantie: "Preisgarantie",
   },
-  ele_gas: {
-    tarifName: "ELE erdgasFair",
-    anzeigeName: "erdgasFair",
-    tarifSub: "Bonitätsfreier Gastarif (ab 5.000 kWh Jahresverbrauch)",
-    badge: "Keine Bonitätsprüfung",
-    laufzeit: "24 Monate Laufzeit",
-    preisgarantie: "Preisgarantie",
-  },
-  vattenfall_gas: {
-    tarifName: "Easy24 Gas PUR",
-    anzeigeName: "Easy24 Gas PUR",
+  lichtblick_gas: {
+    tarifName: "LichtBlick Gas 24",
+    anzeigeName: "Gas 24",
     tarifSub: "Gastarif, bundesweit verfügbar",
     badge: "Bonitätsprüfung durch Anbieter üblich",
     laufzeit: "24 Monate Laufzeit",
@@ -78,22 +66,15 @@ const TARIF_INFO = {
   },
 };
 
-// Bestimmt den EINEN empfohlenen Tarif für die Situation des Kunden.
-// Rückgabe: Tabellenname oder { individuell: true, grund: string }
-function resolveTarif(gruppe, sparte, verbrauch) {
-  const v = Number(verbrauch) || 0;
-
+// Bestimmt den EINEN Tarif für die Situation des Kunden.
+// Es gibt pro Bonitäts-Gruppe genau einen Anbieter je Sparte, keine
+// Verbrauchsstaffelung mehr.
+function resolveTarif(gruppe, sparte) {
   if (sparte === "strom") {
-    if (gruppe === "normal") return "vattenfall_strom";
-    if (v >= 1500) return "planb_strom";
-    if (v >= 500) return "geno_strom";
-    return { individuell: true, grund: "verbrauch_zu_niedrig" };
+    return gruppe === "bonitaetsfrei" ? "meinstadt_strom" : "lichtblick_strom";
   }
-
   // sparte === "gas"
-  if (gruppe === "normal") return "vattenfall_gas";
-  if (v >= 5000) return "ele_gas";
-  return { individuell: true, grund: "verbrauch_zu_niedrig" };
+  return gruppe === "bonitaetsfrei" ? "meinstadt_gas" : "lichtblick_gas";
 }
 
 function lookupBand(table, plz, verbrauch) {
@@ -125,15 +106,7 @@ export default function handler(req, res) {
       return;
     }
 
-    const resolved = resolveTarif(gruppe, sparte, verbrauch);
-
-    // Fall: individuelle Prüfung nötig (Verbrauch unter Mindestgrenze)
-    if (typeof resolved === "object" && resolved.individuell) {
-      res.setHeader("Cache-Control", "public, max-age=3600, s-maxage=3600");
-      res.status(200).json({ found: false, individuell: true, grund: resolved.grund });
-      return;
-    }
-
+    const resolved = resolveTarif(gruppe, sparte);
     const table = TABLES[resolved];
     const info = TARIF_INFO[resolved];
     const result = lookupBand(table, plz, verbrauch);
