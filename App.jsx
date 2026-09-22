@@ -690,6 +690,11 @@ export default function TarifRechner() {
     return goTo(activeSteps[i - 1]);
   }
 
+  function toggleSparteStart() {
+    const neu = data.sparte === "strom" ? "gas" : "strom";
+    update({ sparte: neu, verbrauch: neu === "gas" ? 10000 : 3400 });
+  }
+
   function startGasFlow() {
     setSecondPass(true);
     update({
@@ -857,8 +862,8 @@ export default function TarifRechner() {
           {/* ---------- BASICS ---------- */}
           {step === "basics" && (
             <StepShell
-              eyebrow={secondPass ? "Ihr Gasverbrauch" : "Ihr Verbrauch"}
-              title={secondPass ? "Wo und wie viel Gas verbrauchen Sie?" : "Wo wohnen Sie und wie groß ist Ihr Haushalt?"}
+              eyebrow={data.sparte === "gas" ? "Ihr Gasverbrauch" : "Ihr Verbrauch"}
+              title={data.sparte === "gas" ? "Wo und wie viel Gas verbrauchen Sie?" : "Wo wohnen Sie und wie groß ist Ihr Haushalt?"}
               subtitle="Postleitzahl und Haushaltsgröße reichen für eine erste Einschätzung — Ihr Ergebnis sehen Sie sofort."
               footer={<NavButtons onNext={next} disabled={!canNext} />}
             >
@@ -900,6 +905,18 @@ export default function TarifRechner() {
               <Field label="Jahresverbrauch (kWh)" hint="Automatisch anhand Ihrer Auswahl gesetzt — bei Bedarf anpassbar.">
                 <TextInput inputMode="numeric" value={data.verbrauch} onChange={(e) => update({ verbrauch: e.target.value.replace(/\D/g, "") })} />
               </Field>
+
+              {!secondPass && (
+                <button
+                  type="button"
+                  onClick={toggleSparteStart}
+                  className="w-full flex items-center justify-center gap-2 rounded-full px-4 py-2.5 text-xs font-bold transition-colors"
+                  style={{ background: c.blueTint, color: c.blue, fontFamily: fontDisplay }}
+                >
+                  {data.sparte === "strom" ? <Flame size={14} /> : <Zap size={14} />}
+                  {data.sparte === "strom" ? "Sie suchen einen Gastarif? Gas vergleichen" : "Sie suchen einen Stromtarif? Strom vergleichen"}
+                </button>
+              )}
             </StepShell>
           )}
 
@@ -908,7 +925,7 @@ export default function TarifRechner() {
             <StepShell
               eyebrow="Ihr Wechselweg"
               title="Wie möchten Sie wechseln?"
-              subtitle="Die meisten Stromanbieter führen bei der Anmeldung eine Schufa-/Bonitätsprüfung durch. Wir bieten beide Wege an:"
+              subtitle={`Die meisten ${data.sparte === "gas" ? "Gasanbieter" : "Stromanbieter"} führen bei der Anmeldung eine Schufa-/Bonitätsprüfung durch. Wir bieten beide Wege an:`}
               footer={<NavButtons onBack={back} onNext={next} disabled={!canNext} />}
             >
               <ToggleCard
