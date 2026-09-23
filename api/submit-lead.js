@@ -40,7 +40,7 @@ const STAGE_ID = Number(process.env.PIPEDRIVE_STAGE_ID || 107);
 // da die Pipedrive-Ansicht des Nutzers auf diese Felder eingerichtet ist.
 const FIXED_DEAL_FIELD_KEYS = {
   telefon: "1b1cada39503a8c6f097193c00627e7f727508fd",
-  email: "1768387776cbb443f4d3f2fef150589494bb4aeb",
+  email: "ea26df104846eba020f66dfe128258d9f364fdb9",
 };
 
 function baseUrl() {
@@ -269,9 +269,22 @@ async function upsertDeal(payload, personId) {
   // Feste Deal-Felder "Telefonnummer" / "Mail" zusätzlich befüllen (siehe
   // FIXED_DEAL_FIELD_KEYS oben) — läuft bei JEDEM Aufruf mit, also sowohl
   // beim Neuanlegen als auch beim Aktualisieren eines bestehenden Deals.
+  // Sicherheitsnetz: Keys nur senden, wenn sie aktuell in Pipedrive
+  // existieren. Sonst würde ein in Pipedrive gelöschtes Feld die ganze
+  // /deals-Anfrage mit ERR_SCHEMA_VALIDATION_FAILED abbrechen.
+  const dealFieldMap = await getFieldMap("deal");
+  const validKeys = new Set(dealFieldMap.values());
+
   const normalizedPhone = normalizePhone(payload.telefon);
-  if (normalizedPhone) customFields[FIXED_DEAL_FIELD_KEYS.telefon] = normalizedPhone;
-  if (payload.email) customFields[FIXED_DEAL_FIELD_KEYS.email] = payload.email;
+  const fixedTelefonKey = FIXED_DEAL_FIELD_KEYS.telefon;
+  const fixedEmailKey = FIXED_DEAL_FIELD_KEYS.email;
+
+  if (normalizedPhone && fixedTelefonKey && validKeys.has(fixedTelefonKey)) {
+    customFields[fixedTelefonKey] = normalizedPhone;
+  }
+  if (payload.email && fixedEmailKey && validKeys.has(fixedEmailKey)) {
+    customFields[fixedEmailKey] = payload.email;
+  }
 
   const body = {
     title,
