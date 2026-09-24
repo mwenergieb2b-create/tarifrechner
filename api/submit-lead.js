@@ -140,6 +140,8 @@ async function ensureField(entity, name, fieldType = "varchar") {
    n8n-Setup) werden automatisch wiederverwendet.
 --------------------------------------------------------- */
 const DEAL_FIELD_CONFIG = [
+  ["anrede", "Anrede", "varchar"],
+  ["kontoinhaber", "Kontoinhaber", "varchar"],
   ["submission_typ", "Submission Typ", "varchar"],
   ["geburtsdatum", "Geburtsdatum", "date"],
   ["strasse", "Straße", "varchar"],
