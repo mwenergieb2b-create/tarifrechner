@@ -16,6 +16,8 @@ import {
   UserCheck,
   X,
   AlertTriangle,
+  Thermometer,
+  Moon,
 } from "lucide-react";
 import { usePreis } from "./usePreis";
 
@@ -47,8 +49,24 @@ const WA_LINK =
   "https://api.whatsapp.com/send/?phone=4915114168093&text=Hallo%2C%20ich%20f%C3%BClle%20gerade%20den%20Tarifrechner%20aus%20und%20habe%20eine%20Frage.";
 
 /* ---------------------------------------------------------
+   Vorbelegungs-Tabellen (Wohnfläche → kWh)
+--------------------------------------------------------- */
+const WAERMEPUMPE_PRESETS = [
+  { label: "60 m²", kwh: 1800 },
+  { label: "100 m²", kwh: 3000 },
+  { label: "160 m²", kwh: 4800 },
+];
+
+const NACHTSpeicher_PRESETS = [
+  { label: "40 m²", kwh: 6000 },
+  { label: "60 m²", kwh: 8000 },
+  { label: "90 m²", kwh: 12000 },
+];
+
+/* ---------------------------------------------------------
    Schrittfolgen
 --------------------------------------------------------- */
+// Maske 1: Haushaltsstrom / Heizstrom / Gastarife
 const STEPS_FIRST = ["basics", "wechselweg", "empfehlung", "kontakt", "dokumente", "vertrag", "bankdaten", "zaehler"];
 const STEPS_SECOND = ["basics", "wechselweg", "empfehlung", "dokumente", "bankdaten", "zaehler"];
 const STEPS_INDIVIDUELL_FIRST = ["basics", "wechselweg", "empfehlung", "kontakt", "dokumente"];
@@ -331,7 +349,7 @@ function NavButtons({ onBack, onNext, nextLabel = "Weiter", disabled, loading })
   );
 }
 
-function ToggleCard({ selected, onClick, title, sub, badge, disabled }) {
+function ToggleCard({ selected, onClick, title, sub, badge, disabled, icon }) {
   return (
     <button
       onClick={onClick}
@@ -343,22 +361,32 @@ function ToggleCard({ selected, onClick, title, sub, badge, disabled }) {
         opacity: disabled ? 0.6 : 1,
       }}
     >
-      <div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[15px] font-bold" style={{ color: c.ink, fontFamily: fontDisplay }}>
-            {title}
-          </span>
-          {badge && (
-            <span className="text-[10px] font-extrabold uppercase tracking-wide rounded-full px-2 py-0.5" style={{ background: c.greenTint, color: c.greenDark, fontFamily: fontDisplay }}>
-              {badge}
-            </span>
-          )}
-        </div>
-        {sub && (
-          <div className="text-xs mt-1 leading-relaxed" style={{ color: c.inkSoft }}>
-            {sub}
+      <div className="flex items-start gap-3">
+        {icon && (
+          <div
+            className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
+            style={{ background: selected ? c.blue : c.blueTint, color: selected ? "#fff" : c.blue }}
+          >
+            {icon}
           </div>
         )}
+        <div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[15px] font-bold" style={{ color: c.ink, fontFamily: fontDisplay }}>
+              {title}
+            </span>
+            {badge && (
+              <span className="text-[10px] font-extrabold uppercase tracking-wide rounded-full px-2 py-0.5" style={{ background: c.greenTint, color: c.greenDark, fontFamily: fontDisplay }}>
+                {badge}
+              </span>
+            )}
+          </div>
+          {sub && (
+            <div className="text-xs mt-1 leading-relaxed" style={{ color: c.inkSoft }}>
+              {sub}
+            </div>
+          )}
+        </div>
       </div>
       <div
         className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
@@ -390,7 +418,6 @@ function CheckboxRow({ checked, onClick, children }) {
   );
 }
 
-/* Anrede-Auswahl: zwei Buttons nebeneinander */
 function AnredeToggle({ value, onChange }) {
   const Option = ({ val, label }) => {
     const selected = value === val;
@@ -526,6 +553,7 @@ function buildPayload(data, submissionTyp) {
     bonitaet: data.bonitaet,
     sparte: data.sparte,
     tarif_name: data.tarifName || "",
+    heizungstyp: data.heizungstyp,
   };
 
   const zaehlerStatus = data.zaehlerSpaeter
@@ -575,7 +603,7 @@ async function submitToPipedrive(data, submissionTyp) {
 
 const initialData = {
   sparte: "strom",
-  heizungstyp: "normal",
+  heizungstyp: "normal", // "normal" | "waermepumpe" | "nachtspeicher"
   telefon: "",
   plz: "",
   verbrauch: 3400,
@@ -615,11 +643,8 @@ export default function TarifRechner() {
   const [copied, setCopied] = useState(false);
   const [sending, setSending] = useState(false);
   const [submitError, setSubmitError] = useState(false);
-  const [leadSecured, setLeadSecured] = useState(false);
   const [telefonFromLink, setTelefonFromLink] = useState(false);
-  const [showHeizungChooser, setShowHeizungChooser] = useState(false);
   const [completedSpartes, setCompletedSpartes] = useState([]);
-  const [heizungAbschluss, setHeizungAbschluss] = useState(null);
 
   /* Vorbefüllung aus dem Link */
   useEffect(() => {
@@ -645,7 +670,8 @@ export default function TarifRechner() {
 
   const gruppe = data.bonitaet ? "bonitaetsfrei" : "normal";
   const preis = usePreis(gruppe, data.sparte, data.plz, data.verbrauch);
-  const istIndividuell = preis.individuell || data.heizungstyp === "heizstrom";
+  const istIndividuell =
+    preis.individuell || data.heizungstyp === "waermepumpe" || data.heizungstyp === "nachtspeicher";
 
   const activeSteps = useMemo(() => {
     if (istIndividuell) return secondPass ? STEPS_INDIVIDUELL_SECOND : STEPS_INDIVIDUELL_FIRST;
@@ -656,8 +682,9 @@ export default function TarifRechner() {
   const fraction = step === "abschluss" ? 1 : (stepIndex + 1) / activeSteps.length;
 
   useEffect(() => {
-    if (data.heizungstyp === "heizstrom" && data.sparte === "strom") {
-      setData((d) => ({ ...d, tarif: "individuell", tarifName: "Heizstrom (individuell)" }));
+    if ((data.heizungstyp === "waermepumpe" || data.heizungstyp === "nachtspeicher") && data.sparte === "strom") {
+      const name = data.heizungstyp === "waermepumpe" ? "Wärmepumpe (individuell)" : "Nachtspeicher (individuell)";
+      setData((d) => ({ ...d, tarif: "individuell", tarifName: name }));
     } else if (istIndividuell) {
       setData((d) => ({ ...d, tarif: "individuell", tarifName: "Individuelle Prüfung" }));
     } else if (preis.tarifName) {
@@ -700,16 +727,18 @@ export default function TarifRechner() {
     return goTo(activeSteps[i - 1]);
   }
 
-  function toggleSparteStart() {
-    const neu = data.sparte === "strom" ? "gas" : "strom";
-    update({
-      sparte: neu,
-      verbrauch: neu === "gas" ? 10000 : 3400,
-      heizungstyp: "normal",
-    });
+  // Wechsel zwischen den Hauptoptionen in Maske 1
+  function waehleHaushaltsstrom() {
+    update({ sparte: "strom", heizungstyp: "normal", verbrauch: 3400 });
+  }
+  function waehleHeizstrom() {
+    update({ sparte: "strom", heizungstyp: "waermepumpe", verbrauch: 1800, tarif: "individuell" });
+  }
+  function waehleGas() {
+    update({ sparte: "gas", heizungstyp: "normal", verbrauch: 10000 });
   }
 
-  function startGasFlow() {
+  async function startGasFlow() {
     setSecondPass(true);
     update({
       sparte: "gas",
@@ -723,23 +752,6 @@ export default function TarifRechner() {
     });
     setStep("basics");
     window.scrollTo?.({ top: 0, behavior: "smooth" });
-  }
-
-  async function startHeizungFlow(type) {
-    const merged = {
-      ...data,
-      heizungstyp: type,
-      sparte: "strom",
-      tarif: "individuell",
-      tarifName: type === "waermepumpe" ? "Wärmepumpe (individuell)" : "Nachtspeicher (individuell)",
-    };
-    update({ heizungstyp: type, sparte: "strom", tarif: "individuell" });
-    setSending(true);
-    await submitToPipedrive(merged, "vollstaendig");
-    setSending(false);
-    setShowHeizungChooser(false);
-    setHeizungAbschluss(type);
-    goTo("abschluss");
   }
 
   async function handleShare() {
@@ -766,7 +778,16 @@ export default function TarifRechner() {
     update({ dokumentUpload: rest.length ? rest : null });
   }
 
+  // Presets für Haushaltsstrom oder Gas
   const householdPresets = data.sparte === "gas" ? GAS_PRESETS : HOUSEHOLD_PRESETS;
+
+  // Presets für die Heizstrom-Subtypen
+  const heizPresets =
+    data.heizungstyp === "waermepumpe"
+      ? WAERMEPUMPE_PRESETS
+      : data.heizungstyp === "nachtspeicher"
+      ? NACHTSpeicher_PRESETS
+      : null;
 
   const canNext = useMemo(() => {
     switch (step) {
@@ -819,6 +840,9 @@ export default function TarifRechner() {
   const err = (name) => (touched[name] && !validators[name](data[name]) ? errorText[name] : null);
   const isLastStep = stepIndex === activeSteps.length - 1;
 
+  // Aktuell gewählte Hauptkategorie (für die Maske 1)
+  const hauptKategorie = data.sparte === "gas" ? "gas" : data.heizungstyp === "normal" ? "strom" : "heizstrom";
+
   return (
     <div className="min-h-screen w-full" style={{ background: c.bg, fontFamily: fontBody }}>
       <style>{`
@@ -839,8 +863,14 @@ export default function TarifRechner() {
           <div className="flex items-center gap-2">
             {step !== "abschluss" && (
               <span className="inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: c.blueTint, color: c.blue, fontFamily: fontDisplay }}>
-                {data.sparte === "strom" ? <Zap size={11} /> : <Flame size={11} />}
-                {data.sparte === "strom" ? "Strom" : "Gas"}
+                {data.sparte === "gas" ? <Flame size={11} /> : data.heizungstyp === "nachtspeicher" ? <Moon size={11} /> : data.heizungstyp === "waermepumpe" ? <Thermometer size={11} /> : <Zap size={11} />}
+                {data.sparte === "gas"
+                  ? "Gas"
+                  : data.heizungstyp === "nachtspeicher"
+                  ? "Nachtspeicher"
+                  : data.heizungstyp === "waermepumpe"
+                  ? "Wärmepumpe"
+                  : "Strom"}
               </span>
             )}
             <a
@@ -884,9 +914,25 @@ export default function TarifRechner() {
           {/* ---------- BASICS ---------- */}
           {step === "basics" && (
             <StepShell
-              eyebrow={data.sparte === "gas" ? "Ihr Gasverbrauch" : "Ihr Verbrauch"}
-              title={data.sparte === "gas" ? "Wo und wie viel Gas verbrauchen Sie?" : "Wo wohnen Sie und wie groß ist Ihr Haushalt?"}
-              subtitle="Postleitzahl und Haushaltsgröße reichen für eine erste Einschätzung — Ihr Ergebnis sehen Sie sofort."
+              eyebrow={
+                data.sparte === "gas"
+                  ? "Ihr Gasverbrauch"
+                  : data.heizungstyp === "waermepumpe"
+                  ? "Wärmepumpe"
+                  : data.heizungstyp === "nachtspeicher"
+                  ? "Nachtspeicher"
+                  : "Ihr Verbrauch"
+              }
+              title={
+                data.sparte === "gas"
+                  ? "Wo und wie viel Gas verbrauchen Sie?"
+                  : data.heizungstyp === "waermepumpe"
+                  ? "Wie groß ist die beheizte Fläche?"
+                  : data.heizungstyp === "nachtspeicher"
+                  ? "Wie groß ist die beheizte Fläche?"
+                  : "Wo wohnen Sie und wie groß ist Ihr Haushalt?"
+              }
+              subtitle="Postleitzahl und Verbrauch reichen für eine erste Einschätzung — Ihr Ergebnis sehen Sie sofort."
               footer={<NavButtons onNext={next} disabled={!canNext} />}
             >
               <Field label="Postleitzahl" error={err("plz")}>
@@ -902,65 +948,139 @@ export default function TarifRechner() {
                 />
               </Field>
 
-              {data.sparte === "strom" && (
+              {/* ---------- Hauptmenü (nur beim ersten Durchlauf) ---------- */}
+              {!secondPass && (
                 <div>
                   <span className="block text-sm font-semibold mb-2" style={{ color: c.ink, fontFamily: fontDisplay }}>
-                    Welche Art von Strom benötigen Sie?
+                    Was möchten Sie vergleichen?
                   </span>
                   <div className="grid grid-cols-1 gap-2">
                     <ToggleCard
-                      selected={data.heizungstyp === "normal"}
-                      onClick={() => update({ heizungstyp: "normal" })}
-                      title="Normaler Haushaltsstrom"
+                      selected={hauptKategorie === "strom"}
+                      onClick={waehleHaushaltsstrom}
+                      title="Haushaltsstrom"
                       sub="Für Beleuchtung, Haushaltsgeräte etc."
+                      icon={<Zap size={16} />}
                     />
                     <ToggleCard
-                      selected={data.heizungstyp === "heizstrom"}
-                      onClick={() => update({ heizungstyp: "heizstrom" })}
-                      title="Heizstrom (Wärmepumpe / Nachtspeicher)"
-                      sub="Separater Zähler für Heizung — wir prüfen Ihre Optionen persönlich"
+                      selected={hauptKategorie === "heizstrom"}
+                      onClick={waehleHeizstrom}
+                      title="Heizstrom / Heiztarif"
+                      sub="Separater Zähler für Ihre Heizung"
+                      icon={<Flame size={16} />}
+                    />
+                    <ToggleCard
+                      selected={hauptKategorie === "gas"}
+                      onClick={waehleGas}
+                      title="Gastarife vergleichen"
+                      sub="Erdgas, Ökogas und mehr"
+                      icon={<Flame size={16} />}
                     />
                   </div>
                 </div>
               )}
 
-              <div>
-                <span className="block text-sm font-semibold mb-2" style={{ color: c.ink, fontFamily: fontDisplay }}>
-                  {data.sparte === "strom" ? "Wie viele Personen leben in Ihrem Haushalt?" : "Wie groß ist Ihre Wohnfläche / Ihr Haus?"}
-                </span>
-                <div className="flex flex-wrap gap-2">
-                  {householdPresets.map((p) => (
-                    <button
-                      key={p.label}
-                      onClick={() => update({ verbrauch: p.kwh })}
-                      className="rounded-full px-3.5 py-2 text-xs font-bold transition-colors"
-                      style={{
-                        background: Number(data.verbrauch) === p.kwh ? c.blue : c.blueTint,
-                        color: Number(data.verbrauch) === p.kwh ? "#fff" : c.blue,
-                        fontFamily: fontDisplay,
-                      }}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
+              {/* ---------- Heizstrom: Typ-Auswahl ---------- */}
+              {hauptKategorie === "heizstrom" && (
+                <div>
+                  <span className="block text-sm font-semibold mb-2" style={{ color: c.ink, fontFamily: fontDisplay }}>
+                    Welche Heizungsart nutzen Sie?
+                  </span>
+                  <div className="grid grid-cols-1 gap-2">
+                    <ToggleCard
+                      selected={data.heizungstyp === "waermepumpe"}
+                      onClick={() => update({ heizungstyp: "waermepumpe", verbrauch: 1800, tarif: "individuell" })}
+                      title="Wärmepumpe"
+                      sub="Wir prüfen passende Tarife persönlich für Sie"
+                      icon={<Thermometer size={16} />}
+                    />
+                    <ToggleCard
+                      selected={data.heizungstyp === "nachtspeicher"}
+                      onClick={() => update({ heizungstyp: "nachtspeicher", verbrauch: 6000, tarif: "individuell" })}
+                      title="Nachtspeicherheizung"
+                      sub="Wir prüfen passende Tarife persönlich für Sie"
+                      icon={<Moon size={16} />}
+                    />
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* ---------- Verbrauchsvorbelegung ---------- */}
+              {hauptKategorie === "heizstrom" && heizPresets && (
+                <div>
+                  <span className="block text-sm font-semibold mb-2" style={{ color: c.ink, fontFamily: fontDisplay }}>
+                    Beheizte Fläche
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    {heizPresets.map((p) => (
+                      <button
+                        key={p.label}
+                        onClick={() => update({ verbrauch: p.kwh })}
+                        className="rounded-full px-3.5 py-2 text-xs font-bold transition-colors"
+                        style={{
+                          background: Number(data.verbrauch) === p.kwh ? c.blue : c.blueTint,
+                          color: Number(data.verbrauch) === p.kwh ? "#fff" : c.blue,
+                          fontFamily: fontDisplay,
+                        }}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {hauptKategorie === "strom" && (
+                <div>
+                  <span className="block text-sm font-semibold mb-2" style={{ color: c.ink, fontFamily: fontDisplay }}>
+                    Wie viele Personen leben in Ihrem Haushalt?
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    {householdPresets.map((p) => (
+                      <button
+                        key={p.label}
+                        onClick={() => update({ verbrauch: p.kwh })}
+                        className="rounded-full px-3.5 py-2 text-xs font-bold transition-colors"
+                        style={{
+                          background: Number(data.verbrauch) === p.kwh ? c.blue : c.blueTint,
+                          color: Number(data.verbrauch) === p.kwh ? "#fff" : c.blue,
+                          fontFamily: fontDisplay,
+                        }}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {hauptKategorie === "gas" && (
+                <div>
+                  <span className="block text-sm font-semibold mb-2" style={{ color: c.ink, fontFamily: fontDisplay }}>
+                    Wie groß ist Ihre Wohnfläche / Ihr Haus?
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    {householdPresets.map((p) => (
+                      <button
+                        key={p.label}
+                        onClick={() => update({ verbrauch: p.kwh })}
+                        className="rounded-full px-3.5 py-2 text-xs font-bold transition-colors"
+                        style={{
+                          background: Number(data.verbrauch) === p.kwh ? c.blue : c.blueTint,
+                          color: Number(data.verbrauch) === p.kwh ? "#fff" : c.blue,
+                          fontFamily: fontDisplay,
+                        }}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <Field label="Jahresverbrauch (kWh)" hint="Automatisch anhand Ihrer Auswahl gesetzt — bei Bedarf anpassbar.">
                 <TextInput inputMode="numeric" value={data.verbrauch} onChange={(e) => update({ verbrauch: e.target.value.replace(/\D/g, "") })} />
               </Field>
-
-              {!secondPass && (
-                <button
-                  type="button"
-                  onClick={toggleSparteStart}
-                  className="w-full flex items-center justify-center gap-2 rounded-full px-4 py-2.5 text-xs font-bold transition-colors"
-                  style={{ background: c.blueTint, color: c.blue, fontFamily: fontDisplay }}
-                >
-                  {data.sparte === "strom" ? <Flame size={14} /> : <Zap size={14} />}
-                  {data.sparte === "strom" ? "Sie suchen einen Gastarif? Gas vergleichen" : "Sie suchen einen Stromtarif? Strom vergleichen"}
-                </button>
-              )}
             </StepShell>
           )}
 
@@ -998,7 +1118,7 @@ export default function TarifRechner() {
               title={istIndividuell ? "Ihr Fall braucht einen kurzen persönlichen Blick" : "Dieser Tarif passt zu Ihrer Situation"}
               subtitle={
                 istIndividuell
-                  ? "Bei Ihrem Jahresverbrauch prüfen wir die beste Option persönlich — das dauert bei uns nur wenige Stunden. Hinterlassen Sie einfach Ihre Kontaktdaten."
+                  ? "Bei Ihrem Jahresverbrauch prüfen wir die beste Option persönlich — das dauert bei uns nur wenige Minuten. Hinterlassen Sie einfach Ihre Kontaktdaten."
                   : "Basierend auf Ihrem Wohnort, Verbrauch und gewähltem Wechselweg."
               }
               footer={<NavButtons onBack={back} onNext={next} nextLabel={istIndividuell ? "Weiter zur Kontaktaufnahme" : "Diesen Tarif anfragen"} disabled={!canNext} />}
@@ -1069,13 +1189,13 @@ export default function TarifRechner() {
                 </div>
               )}
 
-              {!preis.loading && istIndividuell && data.heizungstyp === "heizstrom" && (
+              {!preis.loading && istIndividuell && (data.heizungstyp === "waermepumpe" || data.heizungstyp === "nachtspeicher") && (
                 <InfoNote>
-                  Für Heizstrom (Wärmepumpe / Nachtspeicher) gibt es keine pauschalen Tarife von der Stange — wir prüfen Ihre Möglichkeiten persönlich und melden uns mit einer passenden Option.
+                  Für {data.heizungstyp === "waermepumpe" ? "Wärmepumpen" : "Nachtspeicherheizungen"} gibt es keine pauschalen Tarife von der Stange — wir prüfen Ihre Möglichkeiten persönlich und melden uns mit einer passenden Option.
                 </InfoNote>
               )}
 
-              {!preis.loading && istIndividuell && data.heizungstyp !== "heizstrom" && (
+              {!preis.loading && istIndividuell && data.heizungstyp === "normal" && (
                 <InfoNote>
                   Für Jahresverbräuche {data.sparte === "gas" ? "unter 5.000 kWh (Gas)" : "unter 500 kWh (Strom)"} gibt es aktuell keinen pauschalen bonitätsfreien Tarif — wir finden aber fast immer eine Lösung. Ihr persönlicher Ansprechpartner meldet sich dazu direkt bei Ihnen.
                 </InfoNote>
@@ -1094,7 +1214,7 @@ export default function TarifRechner() {
             <StepShell
               eyebrow="Fast geschafft"
               title="Wohin dürfen wir Ihr Angebot schicken?"
-              subtitle="Sie erhalten Ihr persönliches Angebot innerhalb weniger Stunden — per E-Mail oder SMS. Kein Spam, keine Werbeanrufe."
+              subtitle="Sie erhalten Ihr persönliches Angebot innerhalb weniger Minuten — per E-Mail oder SMS. Kein Spam, keine Werbeanrufe."
               footer={<NavButtons onBack={back} onNext={next} disabled={!canNext} />}
             >
               {!data.dokumentUpload && (
@@ -1460,22 +1580,22 @@ export default function TarifRechner() {
                 Vielen Dank{data.vorname ? `, ${data.vorname}` : ""}!
               </h2>
               <p className="text-[15px] leading-relaxed mb-6" style={{ color: c.inkSoft }}>
-                {heizungAbschluss
-                  ? `Ihre Anfrage zu Ihrer ${heizungAbschluss === "waermepumpe" ? "Wärmepumpe" : "Nachtspeicherheizung"} ist bei uns eingegangen. Wir melden uns persönlich bei Ihnen.`
+                {data.heizungstyp === "waermepumpe" || data.heizungstyp === "nachtspeicher"
+                  ? `Ihre Anfrage zu Ihrer ${data.heizungstyp === "waermepumpe" ? "Wärmepumpe" : "Nachtspeicherheizung"} ist bei uns eingegangen. Wir melden uns persönlich bei Ihnen.`
                   : completedSpartes.length >= 2
                   ? "Ihre Anfrage für Strom & Gas ist vollständig bei uns eingegangen. Sie hören in Kürze von uns."
                   : `Ihre ${data.sparte === "gas" ? "Gas" : "Strom"}-Anfrage ist bei uns eingegangen. Sie hören in Kürze von uns.`}
               </p>
 
-              {heizungAbschluss && (
+              {(data.heizungstyp === "waermepumpe" || data.heizungstyp === "nachtspeicher") && (
                 <div className="mb-4 text-left">
                   <InfoNote>
-                    Für {heizungAbschluss === "waermepumpe" ? "Wärmepumpen" : "Nachtspeicherheizungen"} gibt es keine pauschalen Tarife von der Stange — ob und welche Möglichkeiten es für Sie gibt, klären wir gemeinsam in einem kurzen persönlichen Gespräch. Ihr Ansprechpartner meldet sich dazu direkt bei Ihnen.
+                    Für {data.heizungstyp === "waermepumpe" ? "Wärmepumpen" : "Nachtspeicherheizungen"} gibt es keine pauschalen Tarife von der Stange — ob und welche Möglichkeiten es für Sie gibt, klären wir gemeinsam in einem kurzen persönlichen Gespräch. Ihr Ansprechpartner meldet sich dazu direkt bei Ihnen.
                   </InfoNote>
                 </div>
               )}
 
-              {!heizungAbschluss && data.tarif !== "individuell" && (
+              {data.heizungstyp === "normal" && data.tarif !== "individuell" && (
                 <div className="rounded-2xl p-4 mb-4 text-left" style={{ background: c.bg, border: `1px solid ${c.line}` }}>
                   <div className="text-xs mb-1" style={{ color: c.stone }}>
                     Ihre Anfrage
@@ -1491,7 +1611,7 @@ export default function TarifRechner() {
                   So geht es jetzt weiter
                 </div>
                 <div className="space-y-3">
-                  {(heizungAbschluss
+                  {(data.heizungstyp === "waermepumpe" || data.heizungstyp === "nachtspeicher"
                     ? [
                         ["1", "Wir sichten Ihre Angaben und prüfen, welche Möglichkeiten es für Ihre Heizungsart gibt."],
                         ["2", "Ihr persönlicher Ansprechpartner meldet sich bei Ihnen, um alles Weitere direkt zu besprechen."],
@@ -1543,7 +1663,7 @@ export default function TarifRechner() {
               </a>
 
               <div className="space-y-2.5 mt-4">
-                {!secondPass && !heizungAbschluss && !completedSpartes.includes("gas") && (
+                {!secondPass && completedSpartes.length === 1 && !completedSpartes.includes("gas") && (
                   <button
                     onClick={startGasFlow}
                     className="w-full flex items-center justify-center gap-2 rounded-full px-5 py-3.5 text-[15px] font-extrabold"
@@ -1551,24 +1671,6 @@ export default function TarifRechner() {
                   >
                     <Flame size={16} /> Jetzt auch Gas vergleichen
                   </button>
-                )}
-
-                {!showHeizungChooser ? (
-                  <button
-                    onClick={() => setShowHeizungChooser(true)}
-                    className="w-full flex items-center justify-center gap-2 rounded-full px-5 py-3.5 text-[15px] font-extrabold"
-                    style={{ background: c.blueTint, color: c.blue, fontFamily: fontDisplay }}
-                  >
-                    <Zap size={16} /> Nachtspeicher oder Wärmepumpe vergleichen
-                  </button>
-                ) : (
-                  <div className="rounded-2xl p-4 space-y-2.5" style={{ background: c.bg, border: `1px solid ${c.line}` }}>
-                    <p className="text-sm m-0" style={{ color: c.inkSoft }}>
-                      Welche Heizungsart nutzen Sie?
-                    </p>
-                    <ToggleCard selected={false} onClick={() => startHeizungFlow("waermepumpe")} title="Wärmepumpe" sub="Wir prüfen persönlich die passende Option" />
-                    <ToggleCard selected={false} onClick={() => startHeizungFlow("nachtspeicher")} title="Nachtspeicherheizung" sub="Wir prüfen persönlich die passende Option" />
-                  </div>
                 )}
 
                 <button
