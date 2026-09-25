@@ -1,0 +1,250 @@
+diff --git a/App.jsx b/App.jsx
+index f8a7e7a..b3b34a3 100644
+--- a/App.jsx
++++ b/App.jsx
+@@ -1,4 +1,4 @@
+-import React, { useState, useEffect, useMemo } from "react";
++import React, { useState, useEffect, useMemo, useRef } from "react";
+ import { isValidPhoneNumber } from "libphonenumber-js";
+ import {
+   ShieldCheck,
+@@ -20,6 +20,7 @@ import {
+   Moon,
+ } from "lucide-react";
+ import { usePreis } from "./usePreis";
++import SignatureCanvas from "react-signature-canvas";
+ 
+ /* ---------------------------------------------------------
+    Design-Tokens — identisch zur Website kwh-beratung.de
+@@ -67,8 +68,8 @@ const NACHTSpeicher_PRESETS = [
+    Schrittfolgen
+ --------------------------------------------------------- */
+ // Maske 1: Haushaltsstrom / Heizstrom / Gastarife
+-const STEPS_FIRST = ["basics", "wechselweg", "empfehlung", "kontakt", "dokumente", "vertrag", "bankdaten", "zaehler"];
+-const STEPS_SECOND = ["basics", "wechselweg", "empfehlung", "dokumente", "bankdaten", "zaehler"];
++const STEPS_FIRST = ["basics", "wechselweg", "empfehlung", "kontakt", "dokumente", "vertrag", "bankdaten", "zaehler", "vollmacht"];
++const STEPS_SECOND = ["basics", "wechselweg", "empfehlung", "dokumente", "bankdaten", "zaehler", "vollmacht"];
+ const STEPS_INDIVIDUELL_FIRST = ["basics", "wechselweg", "empfehlung", "kontakt", "dokumente"];
+ const STEPS_INDIVIDUELL_SECOND = ["basics", "wechselweg", "empfehlung", "dokumente"];
+ 
+@@ -81,6 +82,7 @@ const STEP_TITLES = {
+   vertrag: "Vertragsdaten",
+   bankdaten: "Zahlung",
+   zaehler: "Zähler",
++  vollmacht: "Vollmacht",
+ };
+ 
+ const HOUSEHOLD_PRESETS = [
+@@ -462,6 +464,7 @@ const STEP_LABELS = {
+   vertrag: "Vertragsdaten eingegeben",
+   bankdaten: "Zahlungsart gewählt",
+   zaehler: "Zählerdaten eingegeben",
++  vollmacht: "Vollmacht erteilt",
+ };
+ 
+ function sendProgressPing(data, step) {
+@@ -594,9 +597,54 @@ async function submitToPipedrive(data, submissionTyp) {
+       headers: { "Content-Type": "application/json" },
+       body: JSON.stringify(buildPayload(data, submissionTyp)),
+     });
+-    return res.ok;
++    const json = await res.json().catch(() => null);
++    if (!res.ok || !json || json.ok === false) return { ok: false };
++    return { ok: true, personId: json.personId, dealId: json.dealId };
+   } catch (e) {
+     console.error("Übermittlung fehlgeschlagen:", e);
++    return { ok: false };
++  }
++}
++
++/* ---------------------------------------------------------
++   Vollmacht — Text + Übermittlung
++--------------------------------------------------------- */
++const VOLLMACHT_URL = "/api/submit-vollmacht";
++
++function buildVollmachtText(data) {
++  const heute = new Date().toLocaleDateString("de-DE");
++  const adresse = [data.strasse, data.hausnummer].filter(Boolean).join(" ");
++  return `Ich, ${data.vorname} ${data.nachname}, geboren am ${data.geburtsdatum || "-"}, wohnhaft ${adresse}, ${data.plz} ${data.ort}, bevollmächtige hiermit Herrn Maximilian Weiß, Bochumer Straße 48, 45529 Hattingen, mich in allen Angelegenheiten im Zusammenhang mit dem Wechsel meines Strom- und/oder Gasanbieters gegenüber meinem bisherigen sowie einem neuen Energieversorger zu vertreten. Die Vollmacht umfasst insbesondere die Kündigung bestehender Energielieferverträge sowie den Abschluss neuer Liefer- und Netznutzungsverträge in meinem Namen und auf meine Rechnung.
++
++Diese Vollmacht ist jederzeit widerruflich und gilt bis zum Abschluss des beauftragten Anbieterwechsels.
++
++Hattingen, den ${heute}`;
++}
++
++async function submitVollmacht({ data, personId, dealId, signatureDataUrl }) {
++  try {
++    const res = await fetch(VOLLMACHT_URL, {
++      method: "POST",
++      headers: { "Content-Type": "application/json" },
++      body: JSON.stringify({
++        formData: {
++          vorname: data.vorname,
++          nachname: data.nachname,
++          geburtsdatum: data.geburtsdatum,
++          strasse: data.strasse,
++          hausnummer: data.hausnummer,
++          plz: data.plz,
++          ort: data.ort,
++        },
++        personId,
++        dealId,
++        signatureDataUrl,
++        vollmachtText: buildVollmachtText(data),
++      }),
++    });
++    return res.ok;
++  } catch (e) {
++    console.error("Vollmacht-Übermittlung fehlgeschlagen:", e);
+     return false;
+   }
+ }
+@@ -645,6 +693,10 @@ export default function TarifRechner() {
+   const [submitError, setSubmitError] = useState(false);
+   const [telefonFromLink, setTelefonFromLink] = useState(false);
+   const [completedSpartes, setCompletedSpartes] = useState([]);
++  const [vollmachtAgreed, setVollmachtAgreed] = useState(false);
++  const [hasSignature, setHasSignature] = useState(false);
++  const [vollmachtWarning, setVollmachtWarning] = useState(false);
++  const sigCanvasRef = useRef(null);
+ 
+   /* Vorbefüllung aus dem Link */
+   useEffect(() => {
+@@ -711,12 +763,27 @@ export default function TarifRechner() {
+ 
+     setSending(true);
+     setSubmitError(false);
+-    const ok = await submitToPipedrive(data, "vollstaendig");
+-    setSending(false);
+-    if (!ok) {
++    setVollmachtWarning(false);
++
++    const result = await submitToPipedrive(data, "vollstaendig");
++    if (!result.ok) {
++      setSending(false);
+       setSubmitError(true);
+       return;
+     }
++
++    if (sigCanvasRef.current && !sigCanvasRef.current.isEmpty()) {
++      const signatureDataUrl = sigCanvasRef.current.getTrimmedCanvas().toDataURL("image/png");
++      const vollmachtOk = await submitVollmacht({
++        data,
++        personId: result.personId,
++        dealId: result.dealId,
++        signatureDataUrl,
++      });
++      if (!vollmachtOk) setVollmachtWarning(true);
++    }
++
++    setSending(false);
+     setCompletedSpartes((s) => (s.includes(data.sparte) ? s : [...s, data.sparte]));
+     return goTo("abschluss");
+   }
+@@ -832,10 +899,12 @@ export default function TarifRechner() {
+       }
+       case "zaehler":
+         return !!data.dokumentUpload || data.zaehlerSpaeter || data.zaehlernummer.trim() || data.zaehlerFoto;
++      case "vollmacht":
++        return vollmachtAgreed && hasSignature;
+       default:
+         return true;
+     }
+-  }, [step, data, preis.loading, telefonFromLink]);
++  }, [step, data, preis.loading, telefonFromLink, vollmachtAgreed, hasSignature]);
+ 
+   const err = (name) => (touched[name] && !validators[name](data[name]) ? errorText[name] : null);
+   const isLastStep = stepIndex === activeSteps.length - 1;
+@@ -1552,6 +1621,61 @@ export default function TarifRechner() {
+             </StepShell>
+           )}
+ 
++          {step === "vollmacht" && (
++            <StepShell
++              eyebrow="Letzter Schritt"
++              title="Vollmacht für den Anbieterwechsel"
++              subtitle="Damit wir den Wechsel für Sie beauftragen können, benötigen wir Ihre Unterschrift."
++              footer={
++                <NavButtons
++                  onBack={back}
++                  onNext={next}
++                  nextLabel="Vollmacht & Anfrage absenden"
++                  disabled={!canNext}
++                  loading={sending}
++                />
++              }
++            >
++              <div
++                className="rounded-2xl p-4 text-sm leading-relaxed whitespace-pre-wrap"
++                style={{ background: c.bg, border: `1px solid ${c.line}`, color: c.inkSoft }}
++              >
++                {buildVollmachtText(data)}
++              </div>
++
++              <CheckboxRow checked={vollmachtAgreed} onClick={() => setVollmachtAgreed((v) => !v)}>
++                Ich bestätige, dass ich die oben stehende Vollmacht wissentlich und freiwillig erteile.
++              </CheckboxRow>
++
++              <div>
++                <div className="text-xs mb-1.5" style={{ color: c.stone }}>
++                  Bitte hier unterschreiben
++                </div>
++                <div
++                  className="rounded-xl overflow-hidden"
++                  style={{ border: `1.5px solid ${c.line}`, background: c.surface }}
++                >
++                  <SignatureCanvas
++                    ref={sigCanvasRef}
++                    penColor={c.ink}
++                    canvasProps={{ className: "w-full", style: { width: "100%", height: 160, display: "block" } }}
++                    onEnd={() => setHasSignature(!(sigCanvasRef.current?.isEmpty() ?? true))}
++                  />
++                </div>
++                <button
++                  onClick={() => {
++                    sigCanvasRef.current?.clear();
++                    setHasSignature(false);
++                  }}
++                  className="mt-2 text-xs font-bold"
++                  style={{ color: c.blue, fontFamily: fontDisplay }}
++                >
++                  Unterschrift löschen
++                </button>
++              </div>
++            </StepShell>
++          )}
++
+           {/* ---------- SUBMIT-FEHLER ---------- */}
+           {submitError && (
+             <div className="mt-4 space-y-3">
+@@ -1587,6 +1711,14 @@ export default function TarifRechner() {
+                   : `Ihre ${data.sparte === "gas" ? "Gas" : "Strom"}-Anfrage ist bei uns eingegangen. Sie hören in Kürze von uns.`}
+               </p>
+ 
++              {vollmachtWarning && (
++                <div className="mb-4 text-left">
++                  <InfoNote tone="warn">
++                    Ihre Anfrage ist eingegangen, die unterschriebene Vollmacht konnte aber gerade nicht übertragen werden. Bitte schreiben Sie uns kurz per WhatsApp, wir kümmern uns darum.
++                  </InfoNote>
++                </div>
++              )}
++
+               {(data.heizungstyp === "waermepumpe" || data.heizungstyp === "nachtspeicher") && (
+                 <div className="mb-4 text-left">
+                   <InfoNote>
+diff --git a/package.json b/package.json
+index 74d31ef..2f78ea5 100644
+--- a/package.json
++++ b/package.json
+@@ -11,8 +11,10 @@
+   "dependencies": {
+     "libphonenumber-js": "^1.13.13",
+     "lucide-react": "^0.383.0",
++    "pdf-lib": "^1.17.1",
+     "react": "^18.3.1",
+-    "react-dom": "^18.3.1"
++    "react-dom": "^18.3.1",
++    "react-signature-canvas": "^1.0.6"
+   },
+   "devDependencies": {
+     "@vitejs/plugin-react": "^4.3.1",
